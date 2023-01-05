@@ -1,0 +1,41 @@
+{% set name = "shelflet" %}
+{% set version = "0.1.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/shelflet-{{ version }}.tar.gz
+  sha256: fd81f3df631f41db1300772f21848442c7a769b396e616401887249b2c5895ea
+
+build:
+  noarch: python
+  script: {{ PYTHON }} -m pip install . -vv
+  number: 0
+
+requirements:
+  build:
+    - python >=3.8
+    - setuptools
+  run:
+    - python >=3.8
+    - zstandard
+
+test:
+  imports:
+    - shelflet
+  commands:
+    - pip check
+  requires:
+    - pip
+
+about:
+  home: https://github.com/mullenkamp/shelflet
+  summary: The Python shelve module except with compression to make smaller shelves!
+  license: Apache-2.0
+  license_file: LICENSE
+
+extra:
+  recipe-maintainers:
+    - mullenkamp
