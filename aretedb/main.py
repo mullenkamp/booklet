@@ -12,22 +12,20 @@ import inspect
 import gzip
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Generic, Iterator, Union
+import zstandard as zstd
+from multiprocessing import shared_memory
 
 import utils
 # from . import utils
 
 imports = {}
+imports['zstd'] = True
 try:
     import orjson
     imports['orjson'] = True
 except:
     imports['orjson'] = False
 
-try:
-    import zstandard as zstd
-    imports['zstd'] = True
-except:
-    imports['zstd'] = False
 
 try:
     import lz4
@@ -38,12 +36,15 @@ except:
 
 __all__ = ['Arete']
 
-hidden_keys = (b'00~._serializer', b'01~._compressor', b'02~._key_serializer')
+hidden_keys = ('00~._stale', '01~._serializer', '02~._compressor')
 
 uuid_arete = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
-special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
+# special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
 version = 1
 version_bytes = version.to_bytes(2, 'little', signed=False)
+
+lock_bytes = (-1).to_bytes(1, 'little', signed=True)
+unlock_bytes = (0).to_bytes(1, 'little', signed=True)
 
 page_size = mmap.ALLOCATIONGRANULARITY
 
@@ -130,18 +131,18 @@ class Lz4:
 #         return '<Closed Dictionary>'
 
 
-file_path = '/media/nvme1/cache/arete/test.arete'
-flag = 'n'
-sync: bool = False
-lock: bool = True
-serializer = 'pickle'
-protocol: int = 5
-compressor = None
-compress_level: int = 1
-key_serializer = 'str'
+# file_path = '/media/nvme1/cache/arete/test.arete'
+# flag = 'n'
+# sync: bool = False
+# lock: bool = True
+# serializer = 'pickle'
+# protocol: int = 5
+# compressor = None
+# compress_level: int = 1
+# index_serializer = 'str'
 
-key = b'00~._serializer'
-value = pickle.dumps(Pickle(protocol), protocol)
+# key = b'00~._serializer'
+# value = pickle.dumps(Pickle(protocol), protocol)
 
 
 class Arete(MutableMapping):
@@ -149,7 +150,7 @@ class Arete(MutableMapping):
 
     """
 
-    def __init__(self, file_path: str, flag: str = "r", sync: bool = False, lock: bool = True, serializer = None, protocol: int = 5, compressor = None, compress_level: int = 1, key_serializer = None):
+    def __init__(self, file_path: str, flag: str = "r", sync: bool = False, lock: bool = True, serializer = None, protocol: int = 5, compressor = None, compress_level: int = 1, write_buffer_size = 10000000):
         """
 
         """
@@ -171,23 +172,33 @@ class Arete(MutableMapping):
 
         # self.db = db
         self._write = write
+        self._write_buffer_size = write_buffer_size
+        self._write_buffer_pos = 0
+        self._updated = False
+
+        self._index_path = pathlib.Path(str(file_path) + '.index')
 
         ## Load or assign encodings
         if fp_exists:
             if write:
-                f = io.FileIO(file_path, 'r+b')
-                self._file = io.BufferedWriter(f, 10000000)
-                self._mm = mmap.mmap(self._file.fileno(), 0)
-                # self._mm = open(file_path, 'r+b')
-            else:
-                f = io.FileIO(file_path, 'rb')
-                self._file = io.BufferedReader(f, 10000000)
-                self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
-                # self._mm = open(file_path, 'rb')
+                self._file = io.open(file_path, 'r+b')
+                self._file.seek(18)
+                lock = int.from_bytes(self._file.read(1), 'little', signed=True)
+                if lock == -1:
+                    raise ValueError('File is already opened for writing.')
+                self._file.seek(18)
+                _ = self._file.write(lock_bytes)
+                self._file.flush()
 
-            self._serializer = pickle.loads(utils.get_value(self._mm, b'00~._serializer'))
-            self._compressor = pickle.loads(utils.get_value(self._mm, b'01~._compressor'))
-            self._key_serializer = pickle.loads(utils.get_value(self._mm, b'02~._key_serial'))
+                self._write_buffer = mmap.mmap(-1, write_buffer_size)
+            else:
+                self._file = io.open(file_path, 'rb')
+
+            with io.open(self._index_path, 'rb') as index_file:
+                self.index = Pickle(5).loads(Zstd(1).decompress(index_file.read()))
+
+            self._serializer = pickle.loads(utils.get_value(self._file, self.index, '01~._serializer'))
+            self._compressor = pickle.loads(utils.get_value(self._file, self.index, '02~._compressor'))
         else:
             ## Value Serializer
             if serializer is None:
@@ -210,32 +221,9 @@ class Arete(MutableMapping):
                 else:
                     raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
             else:
-                raise ValueError('serializer must be one of pickle, json, str, orjson, or a serializer class with dumps and loads methods.')
+                raise ValueError('value serializer must be one of None, str, pickle, json, orjson, or a serializer class with dumps and loads methods.')
 
-            ## Key Serializer
-            if key_serializer is None:
-                self._key_serializer = None
-            elif key_serializer == 'str':
-                self._key_serializer = Str
-            elif key_serializer == 'pickle':
-                self._key_serializer = Pickle(protocol)
-            elif key_serializer == 'json':
-                self._key_serializer = Json
-            elif key_serializer == 'orjson':
-                if imports['orjson']:
-                    self._key_serializer = Orjson
-                else:
-                    raise ValueError('orjson could not be imported.')
-            elif inspect.isclass(key_serializer):
-                class_methods = dir(key_serializer)
-                if ('dumps' in class_methods) and ('loads' in class_methods):
-                    self._key_serializer = key_serializer
-                else:
-                    raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
-            else:
-                raise ValueError('serializer must be one of pickle, json, orjson, or a serializer class with dumps and loads methods.')
-
-            ## Compressor
+            ## Value Compressor
             if compressor is None:
                 self._compressor = None
             elif compressor == 'gzip':
@@ -259,40 +247,42 @@ class Arete(MutableMapping):
             else:
                 raise ValueError('compressor must be one of gzip, zstd, lz4, or a compressor class with compress and decompress methods.')
 
+
             ## Write uuid and version and Save encodings to new file
-            # with open(file_path, 'w+b') as f:
-            #     _ = f.write(uuid_arete + version_bytes)
+            index = {'00~._stale': []}
 
-            with open(file_path, 'w+b') as f:
-                _ = f.write(uuid_arete + version_bytes)
-                utils.write_chunk(f, b'00~._serializer', pickle.dumps(self._serializer, protocol))
-                utils.write_chunk(f, b'01~._compressor', pickle.dumps(self._compressor, protocol))
-                utils.write_chunk(f, b'02~._key_serial', pickle.dumps(self._key_serializer, protocol))
+            self._index_path.unlink(True)
 
-            f = io.FileIO(file_path, 'r+b')
-            self._file = io.BufferedWriter(f, 10000000)
-            self._mm = mmap.mmap(self._file.fileno(), 0)
-            # self._mm = open(file_path, 'r+b')
+            self._file = io.open(file_path, 'w+b', buffering=write_buffer_size)
+
+            self._write_buffer = mmap.mmap(-1, write_buffer_size)
+
+            _ = self._file.write(uuid_arete + version_bytes + lock_bytes)
+            self._file.flush()
+
+            self._write_buffer_pos = utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self._write_buffer_pos, index, '01~._serializer', pickle.dumps(self._serializer, protocol))
+            self._write_buffer_pos = utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self._write_buffer_pos, index, '02~._compressor', pickle.dumps(self._compressor, protocol))
+
+            self.index = index
+
+            self.sync()
 
 
-    def _pre_key(self, key) -> bytes:
+    # def _pre_key(self, key) -> bytes:
 
-        ## Serialize to bytes
-        if self._key_serializer is not None:
-            key = self._key_serializer.dumps(key)
+    #     ## Serialize to bytes
+    #     if self._index_serializer is not None:
+    #         key = self._index_serializer.dumps(key)
 
-        if len(key) > 255:
-            raise ValueError('key length must be less tha 256 bytes.')
+    #     return key
 
-        return key
+    # def _post_key(self, key: bytes):
 
-    def _post_key(self, key: bytes):
+    #     ## Serialize from bytes
+    #     if self._index_serializer is not None:
+    #         key = self._index_serializer.loads(key)
 
-        ## Serialize from bytes
-        if self._key_serializer is not None:
-            key = self._key_serializer.loads(key)
-
-        return key
+    #     return key
 
     def _pre_value(self, value) -> bytes:
 
@@ -319,39 +309,37 @@ class Arete(MutableMapping):
         return value
 
     def keys(self):
-        for key in utils.get_keys_values(self._mm, keys=True):
+        for key in self.index.keys():
             if key not in hidden_keys:
-                yield self._post_key(key)
+                yield key
 
     def items(self):
-        for key, value in utils.get_keys_values(self._mm, keys=True, values=True):
+        for key in self.keys():
             if key not in hidden_keys:
-                yield self._post_key(key), self._post_value(self.env[key])
+                yield key, self[key]
 
     def values(self):
-        for key in utils.get_keys_values(self._mm, values=True):
+        for key in self.keys():
             if key not in hidden_keys:
-                yield self._post_value(self.env[key])
+                yield self[key]
 
     def __iter__(self):
         return self.keys()
 
     def __len__(self):
-        keys_len = 0
-        for key in self.keys():
-            keys_len += 1
+        keys_len = len(self.index)
         return keys_len - len(hidden_keys)
 
     def __contains__(self, key):
-        return self._pre_key(key) in self.keys()
+        return key in self.index
 
     def get(self, key, default=None):
-        value = utils.get_value(self._mm, self._pre_key(key))
+        value = utils.get_value(self._file, self.index, key)
 
         if value is None:
             return default
         else:
-            return self._post_value(utils.get_value(self._mm, self._pre_key(key)))
+            return self._post_value(value)
 
     def update(self, key_value_dict):
         """
@@ -359,6 +347,7 @@ class Arete(MutableMapping):
         """
         if self._write:
             self._write_many_chunks(key_value_dict)
+            self._updated = True
 
             self.sync()
         else:
@@ -368,22 +357,42 @@ class Arete(MutableMapping):
         """
 
         """
+        self._file.seek(0, 2)
+        file_pos = self._file.tell()
+
         write_bytes = bytearray()
         for key, value in key_value_dict.items():
-            k = self._pre_key(key)
-            v = self._pre_value(value)
-            key_len_bytes = len(k).to_bytes(1, 'little', signed=False)
-            value_len_bytes = len(v).to_bytes(8, 'little', signed=False)
+            value = self._pre_value(value)
+            value_len_bytes = len(value)
 
-            write_bytes += memoryview(special_bytes + key_len_bytes + k + value_len_bytes + v)
+            if key in self.index:
+                pos0 = self.index.pop(key)
+                self.index['00~._stale'].append(pos0)
 
-        self._file.seek(0, 2)
+            self.index[key] = file_pos
+            file_pos += value_len_bytes + 4
+
+            write_bytes += value_len_bytes.to_bytes(4, 'little', signed=False) + value
 
         new_n_bytes = self._file.write(write_bytes)
 
-        # reassign_old_key(mm, key, old_len)
-
         return new_n_bytes
+
+
+    def prune(self):
+        """
+        Prunes the old keys and associated values. Returns the recovered space in bytes.
+        """
+        if self._write and self.index['00~._stale']:
+            recovered_space = utils.prune_file(self._file, self.index)
+        else:
+            raise ValueError('File is open for read only.')
+
+        return recovered_space
+
+
+
+
 
     # def reorganize(self):
     #     """
@@ -402,12 +411,16 @@ class Arete(MutableMapping):
 
     def __setitem__(self, key, value):
         if self._write:
-            utils.write_chunk(self._file, self._pre_key(key), self._pre_value(value))
+            self._write_buffer_pos = utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self._write_buffer_pos, self.index, key, self._pre_value(value))
+            self._updated = True
         else:
             raise ValueError('File is open for read only.')
 
     def __delitem__(self, key):
-        utils.reassign_old_key(self._mm, key, len(self._mm))
+        if key not in self.index:
+            raise KeyError(key)
+        pos = self.index.pop(key)
+        self.index['00~._stale'].append(pos)
 
     def __enter__(self):
         return self
@@ -417,44 +430,52 @@ class Arete(MutableMapping):
 
     def clear(self):
         if self._write:
-            pos = utils.find_chunk_pos(self._mm, hidden_keys[-1])
-            key_len = len(hidden_keys[-1])
-            self._mm.seek(pos+10+key_len)
-            value_len = int.from_bytes(self._mm.read(8), 'little')
-            total_len = pos + 10 + key_len + 8 + value_len
-
-            self._mm.resize(total_len)
+            pos = max([self.index[key] for key in hidden_keys[1:]])
+            self._file.seek(pos)
+            value_len_bytes = int.from_bytes(self._file.read(4), 'little', signed=False)
+            self._file.truncate(pos + 4 + value_len_bytes)
+            for key in list(self.index.keys()):
+                if key not in hidden_keys:
+                    del self.index[key]
             self.sync()
         else:
             raise ValueError('File is open for read only.')
 
     def close(self):
         self.sync()
+        if self._write:
+            self._write_buffer.close()
+            self._file.seek(18)
+            _ = self._file.write(unlock_bytes)
+            self._file.flush()
+
+        self._file.close()
         try:
-            self._mm.close()
-        except:
-            pass
-        try:
-            self._file.close()
+            del self.index
         except:
             pass
 
-    def __del__(self):
-        self.close()
+    # def __del__(self):
+    #     self.close()
 
     def sync(self):
-        try:
-            self._mm.flush()
-        except:
-            pass
-        try:
+        if self._write and self._updated:
+            self._sync_index()
+            wb_pos = self._write_buffer.tell()
+            if wb_pos > 0:
+                self._write_buffer.seek(0)
+                _ = self._file.write(self._write_buffer.read(wb_pos))
+                self._write_buffer.seek(0)
             self._file.flush()
-        except:
-            pass
+
+    def _sync_index(self):
+
+        with io.open(self._index_path, 'wb') as i:
+            i.write(Zstd(1).compress(Pickle(5).dumps(self.index)))
 
 
 # def open(
-#     file_path: str, flag: str = "r", sync: bool = False, lock: bool = True, serializer = None, protocol: int = 5, compressor = None, compress_level: int = 1, key_serializer = None):
+#     file_path: str, flag: str = "r", sync: bool = False, lock: bool = True, serializer = None, protocol: int = 5, compressor = None, compress_level: int = 1, index_serializer = None):
 #     """
 #     Open a persistent dictionary for reading and writing. On creation of the file, the encodings (serializer and compressor) will be written to the file. Any reads and new writes do not need to be opened with the encoding parameters. Currently, ShockDB uses pickle to serialize the encodings to the file.
 
@@ -506,4 +527,4 @@ class Arete(MutableMapping):
 
 #     """
 
-#     return Arete(file_path, flag, sync, lock, serializer, protocol, compressor, compress_level, key_serializer)
+#     return Arete(file_path, flag, sync, lock, serializer, protocol, compressor, compress_level, index_serializer)
