@@ -260,8 +260,8 @@ class Arete(MutableMapping):
             _ = self._file.write(uuid_arete + version_bytes + lock_bytes)
             self._file.flush()
 
-            self._write_buffer_pos = utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self._write_buffer_pos, index, '01~._serializer', pickle.dumps(self._serializer, protocol))
-            self._write_buffer_pos = utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self._write_buffer_pos, index, '02~._compressor', pickle.dumps(self._compressor, protocol))
+            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, index, '01~._serializer', pickle.dumps(self._serializer, protocol))
+            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, index, '02~._compressor', pickle.dumps(self._compressor, protocol))
 
             self.index = index
 
@@ -411,7 +411,7 @@ class Arete(MutableMapping):
 
     def __setitem__(self, key, value):
         if self._write:
-            self._write_buffer_pos = utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self._write_buffer_pos, self.index, key, self._pre_value(value))
+            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self.index, key, self._pre_value(value))
             self._updated = True
         else:
             raise ValueError('File is open for read only.')

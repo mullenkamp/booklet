@@ -17,20 +17,11 @@ from mmap import mmap
 ### Functions
 
 
-def write_chunk(file, write_buffer, write_buffer_size, wb_pos, index, key, value):
+def write_chunk(file, write_buffer, write_buffer_size, index, key, value):
     """
 
     """
-    # key_len_bytes = len(key).to_bytes(1, 'little', signed=False)
-    # value_len_bytes = len(value).to_bytes(8, 'little', signed=False)
-
-    # write_bytes = memoryview(special_bytes + key_len_bytes + key + value_len_bytes + value)
-
-    # new_n_bytes = len(write_bytes)
-    # old_len = len(mm)
-
-    # mm.resize(old_len + new_n_bytes)
-
+    wb_pos = write_buffer.tell()
     file_pos = file.seek(0, 2)
 
     value_len_bytes = len(value)
@@ -39,13 +30,13 @@ def write_chunk(file, write_buffer, write_buffer_size, wb_pos, index, key, value
     if (value_len_bytes + 4) > write_buffer_size:
         new_n_bytes = file.write(write_bytes)
         # file.flush()
-        new_wb_pos = wb_pos
+        # new_wb_pos = wb_pos
         wb_pos = 0
         file_pos = file.tell()
     else:
         # wb_pos = write_buffer.tell()
         wb_space = write_buffer_size - wb_pos
-        if wb_space < (value_len_bytes + 4):
+        if (value_len_bytes + 4) > wb_space:
             write_buffer.seek(0)
             _ = file.write(write_buffer.read(wb_pos))
             # file.flush()
@@ -56,7 +47,7 @@ def write_chunk(file, write_buffer, write_buffer_size, wb_pos, index, key, value
         #     write_buffer.seek(wb_pos)
 
         new_n_bytes = write_buffer.write(write_bytes)
-        new_wb_pos = wb_pos + new_n_bytes
+        # new_wb_pos = wb_pos + new_n_bytes
 
     if key in index:
         # old_index = list(index.pop(key))
@@ -67,7 +58,6 @@ def write_chunk(file, write_buffer, write_buffer_size, wb_pos, index, key, value
 
     index[key] = file_pos + wb_pos
 
-    return new_wb_pos
 
 
 # def write_chunk(file, index, key, value):
