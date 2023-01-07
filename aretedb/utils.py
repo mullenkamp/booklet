@@ -5,7 +5,11 @@ Created on Thu Jan  5 11:04:13 2023
 
 @author: mike
 """
-from mmap import mmap
+import os
+import io
+from mmap import mmap, ACCESS_READ
+from hashlib import blake2b
+from time import time
 
 ############################################
 ### Parameters
@@ -17,46 +21,42 @@ from mmap import mmap
 ### Functions
 
 
-def write_chunk(file, write_buffer, write_buffer_size, index, key, value):
+def write_chunk(file, write_buffer, write_buffer_size, buffer_index, key, value):
     """
 
     """
     wb_pos = write_buffer.tell()
     file_pos = file.seek(0, 2)
 
+    key_len_bytes = len(key)
+    key_hash = blake2b(key, digest_size=11).digest()
+
     value_len_bytes = len(value)
-    write_bytes = value_len_bytes.to_bytes(4, 'little', signed=False) + value
+    write_bytes = key_len_bytes.to_bytes(1, 'little', signed=False) + key + value_len_bytes.to_bytes(4, 'little', signed=False) + value
 
     if (value_len_bytes + 4) > write_buffer_size:
         new_n_bytes = file.write(write_bytes)
-        # file.flush()
-        # new_wb_pos = wb_pos
         wb_pos = 0
         file_pos = file.tell()
     else:
-        # wb_pos = write_buffer.tell()
         wb_space = write_buffer_size - wb_pos
         if (value_len_bytes + 4) > wb_space:
             write_buffer.seek(0)
             _ = file.write(write_buffer.read(wb_pos))
-            # file.flush()
             write_buffer.seek(0)
             wb_pos = 0
             file_pos = file.tell()
-        # else:
-        #     write_buffer.seek(wb_pos)
 
         new_n_bytes = write_buffer.write(write_bytes)
-        # new_wb_pos = wb_pos + new_n_bytes
 
-    if key in index:
-        # old_index = list(index.pop(key))
-        # old_index.insert(0, key)
-        pos = index.pop(key)
+    if key_hash in buffer_index:
+        _ = buffer_index.pop(key_hash)
 
-        index['00~._stale'].append(pos)
+    # if key in index:
+    #     pos0 = index.pop(key)
+    #     index['00~._stale'].append(pos0)
 
-    index[key] = file_pos + wb_pos
+    buffer_index[key_hash] = file_pos + wb_pos
 
 
 
@@ -117,20 +117,15 @@ def write_chunk(file, write_buffer, write_buffer_size, index, key, value):
 #     return new_n_bytes
 
 
-def read_index(file_path):
-    """
-
-    """
-
-
-
 def get_value(file, index, key):
     """
 
     """
-    pos = index[key]
+    key_len_bytes = len(key)
+    key_hash = blake2b(key, digest_size=11).digest()
+    pos = index[key_hash]
 
-    file.seek(pos)
+    file.seek(pos + 1 + key_len_bytes)
     value_len_bytes = int.from_bytes(file.read(4), 'little', signed=False)
 
     value = file.read(value_len_bytes)
@@ -181,47 +176,67 @@ def prune_file(file, index):
     return extra_space
 
 
+def serialize_index(index):
+    """
+
+    """
+    index_bytes = bytearray()
+    for h, pos in index.items():
+        index_bytes += h + pos.to_bytes(8, 'little', signed=False)
+
+    return index_bytes
+
+
+def deserialize_index(index_path, read_buffer_size):
+    """
+
+    """
+    # start = time()
+    base_index = {}
+    file_len = os.stat(index_path).st_size
+    with io.open(index_path, 'rb') as file:
+        with io.BufferedReader(file, buffer_size=read_buffer_size) as mm:
+            n_chunks = (file_len//read_buffer_size)
+            read_len_list = [read_buffer_size] * (file_len//read_buffer_size)
+            read_len_list.append(file_len - (n_chunks * read_buffer_size))
+            for i in read_len_list:
+                # print(i)
+                key_chunk = mm.read(i)
+                base_index.update({key_chunk[i:i+11]: int.from_bytes(key_chunk[i+11:i+19], 'little', signed=False) for i in range(0, len(key_chunk), 19)})
+    # end = time()
+    # print(end - start)
+
+    return base_index
 
 
 
 
 
+def find_key_pos(mm, key, start_pos=19, end_pos=None):
+    """
 
-# def find_chunk_pos(mm, key, end_pos=None):
-#     """
+    """
+    # key_len = len(key)
+    # key_len_bytes = key_len.to_bytes(1, 'little', signed=False)
+    # key_chunk = memoryview(special_bytes + key_len_bytes + key)
 
-#     """
-#     key_len = len(key)
-#     key_len_bytes = key_len.to_bytes(1, 'little', signed=False)
-#     key_chunk = memoryview(special_bytes + key_len_bytes + key)
+    with io.open(index_path, 'rb') as file:
+        with io.BufferedReader(file, buffer_size=read_buffer_size) as buf:
+            with mmap(buf.fileno(), 0, access=ACCESS_READ) as mm:
+                if end_pos is None:
+                    end_pos = len(mm)
 
-#     if end_pos is None:
-#         end_pos = len(mm)
+                mm.seek(19)
+                print(mm.read(11))
 
-#     # Is this that fastest way to find the last position when the file is large?
-#     last_pos = mm.find(key_chunk, 18, end_pos)
+                key_pos = mm.find(key, start_pos, end_pos)
+                if key_pos == -1:
+                    raise KeyError(key)
+                while key_pos % 19 > 0:
+                    key_pos = mm.find(key, key_pos, end_pos)
 
-#     # if last_pos > -1:
-#     #     while True:
-#     #          mm.seek(last_pos+10+key_len)
+    return key_pos
 
-#     #          value_len = int.from_bytes(mm.read(8), 'little')
-#     #          total_len = 10 + key_len + 8 + value_len
-
-#     #          end_pos0 = last_pos + total_len
-
-#     #          if end_pos0 == end_pos:
-#     #              break
-#     #          else:
-#     #              mm.seek(value_len, 1)
-#     #              next_special = mm.read(9)
-
-#     #              if next_special == special_bytes:
-#     #                  break
-
-#     #          last_pos = mm.find(key_chunk, len(last_pos), end_pos)
-
-#     return last_pos
 
 
 # def reassign_old_key(mm, key, last_pos):
@@ -286,7 +301,16 @@ def prune_file(file, index):
 
 
 
+def test_scan():
+    with io.open(index_path, 'rb') as file:
+        with io.BufferedReader(file, buffer_size=read_buffer_size) as buf:
+            with mmap(buf.fileno(), 0, access=ACCESS_READ) as mm:
+                end_pos = len(mm)
 
+                key_pos = mm.find(key, start_pos, end_pos)
+                while key_pos % 19 > 0:
+                    key_pos = mm.find(key, key_pos, end_pos)
+    return key_pos
 
 
 

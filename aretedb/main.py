@@ -13,7 +13,8 @@ import gzip
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Generic, Iterator, Union
 import zstandard as zstd
-from multiprocessing import shared_memory
+# from multiprocessing import shared_memory
+from hashlib import blake2b
 
 import utils
 # from . import utils
@@ -45,6 +46,7 @@ version_bytes = version.to_bytes(2, 'little', signed=False)
 
 lock_bytes = (-1).to_bytes(1, 'little', signed=True)
 unlock_bytes = (0).to_bytes(1, 'little', signed=True)
+stale_key_bytes = (0).to_bytes(8, 'little', signed=True)
 
 page_size = mmap.ALLOCATIONGRANULARITY
 
@@ -131,7 +133,8 @@ class Lz4:
 #         return '<Closed Dictionary>'
 
 
-# file_path = '/media/nvme1/cache/arete/test.arete'
+file_path = '/media/nvme1/cache/arete/test.arete'
+file_path = '/media/nvme1/git/nzrec/data/node.arete'
 # flag = 'n'
 # sync: bool = False
 # lock: bool = True
@@ -145,7 +148,7 @@ class Lz4:
 # value = pickle.dumps(Pickle(protocol), protocol)
 
 
-class Arete(MutableMapping):
+class Arete(object):
     """
 
     """
@@ -174,7 +177,6 @@ class Arete(MutableMapping):
         self._write = write
         self._write_buffer_size = write_buffer_size
         self._write_buffer_pos = 0
-        self._updated = False
 
         self._index_path = pathlib.Path(str(file_path) + '.index')
 
@@ -194,11 +196,10 @@ class Arete(MutableMapping):
             else:
                 self._file = io.open(file_path, 'rb')
 
-            with io.open(self._index_path, 'rb') as index_file:
-                self.index = Pickle(5).loads(Zstd(1).decompress(index_file.read()))
+            self._base_index = utils.deserialize_index(self._index_path, write_buffer_size)
 
-            self._serializer = pickle.loads(utils.get_value(self._file, self.index, '01~._serializer'))
-            self._compressor = pickle.loads(utils.get_value(self._file, self.index, '02~._compressor'))
+            self._serializer = pickle.loads(utils.get_value(self._file, self._base_index, b'01~._serializer'))
+            self._compressor = pickle.loads(utils.get_value(self._file, self._base_index, b'02~._compressor'))
         else:
             ## Value Serializer
             if serializer is None:
@@ -249,7 +250,8 @@ class Arete(MutableMapping):
 
 
             ## Write uuid and version and Save encodings to new file
-            index = {'00~._stale': []}
+            base_index = {}
+            buffer_index = {}
 
             self._index_path.unlink(True)
 
@@ -260,10 +262,14 @@ class Arete(MutableMapping):
             _ = self._file.write(uuid_arete + version_bytes + lock_bytes)
             self._file.flush()
 
-            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, index, '01~._serializer', pickle.dumps(self._serializer, protocol))
-            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, index, '02~._compressor', pickle.dumps(self._compressor, protocol))
+            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, buffer_index, b'01~._serializer', pickle.dumps(self._serializer, protocol))
+            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, buffer_index, b'02~._compressor', pickle.dumps(self._compressor, protocol))
 
-            self.index = index
+            self._base_index = base_index
+            self._buffer_index = buffer_index
+
+            with io.open(self._index_path, 'wb') as i:
+                pass
 
             self.sync()
 
@@ -327,14 +333,14 @@ class Arete(MutableMapping):
         return self.keys()
 
     def __len__(self):
-        keys_len = len(self.index)
+        keys_len = len(self._base_index)
         return keys_len - len(hidden_keys)
 
     def __contains__(self, key):
-        return key in self.index
+        return key in self._base_index
 
     def get(self, key, default=None):
-        value = utils.get_value(self._file, self.index, key)
+        value = utils.get_value(self._file, self._base_index, key)
 
         if value is None:
             return default
@@ -347,7 +353,6 @@ class Arete(MutableMapping):
         """
         if self._write:
             self._write_many_chunks(key_value_dict)
-            self._updated = True
 
             self.sync()
         else:
@@ -365,30 +370,36 @@ class Arete(MutableMapping):
             value = self._pre_value(value)
             value_len_bytes = len(value)
 
-            if key in self.index:
-                pos0 = self.index.pop(key)
-                self.index['00~._stale'].append(pos0)
+            key_len_bytes = len(key)
+            key_hash = blake2b(key, digest_size=11).digest()
 
-            self.index[key] = file_pos
-            file_pos += value_len_bytes + 4
+            if key_hash in self._buffer_index:
+                _ = self._buffer_index.pop(key_hash)
 
-            write_bytes += value_len_bytes.to_bytes(4, 'little', signed=False) + value
+            # if key in self.index:
+            #     pos0 = self.index.pop(key)
+            #     self.index['00~._stale'].append(pos0)
+
+            self._buffer_index[key_hash] = file_pos
+            file_pos += 1 + key_len_bytes + 4 + value_len_bytes
+
+            write_bytes += key_len_bytes.to_bytes(1, 'little', signed=False) + key + value_len_bytes.to_bytes(4, 'little', signed=False) + value
 
         new_n_bytes = self._file.write(write_bytes)
 
         return new_n_bytes
 
 
-    def prune(self):
-        """
-        Prunes the old keys and associated values. Returns the recovered space in bytes.
-        """
-        if self._write and self.index['00~._stale']:
-            recovered_space = utils.prune_file(self._file, self.index)
-        else:
-            raise ValueError('File is open for read only.')
+    # def prune(self):
+    #     """
+    #     Prunes the old keys and associated values. Returns the recovered space in bytes.
+    #     """
+    #     if self._write and self.index['00~._stale']:
+    #         recovered_space = utils.prune_file(self._file, self.index)
+    #     else:
+    #         raise ValueError('File is open for read only.')
 
-        return recovered_space
+    #     return recovered_space
 
 
 
@@ -411,16 +422,33 @@ class Arete(MutableMapping):
 
     def __setitem__(self, key, value):
         if self._write:
-            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self.index, key, self._pre_value(value))
-            self._updated = True
+            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self._buffer_index, key, self._pre_value(value))
         else:
             raise ValueError('File is open for read only.')
 
     def __delitem__(self, key):
-        if key not in self.index:
+        if key not in self:
             raise KeyError(key)
-        pos = self.index.pop(key)
-        self.index['00~._stale'].append(pos)
+
+        key_hash = blake2b(key, digest_size=11).digest()
+
+        if key_hash in self._buffer_index:
+            _ = self._buffer_index.pop(key_hash)
+
+        self._buffer_index[key_hash] = 0
+
+        # self.sync()
+
+        # key_hash = blake2b(key, digest_size=11).digest()
+
+        # with io.open(self._index_path, 'r+b') as i:
+        #     with mmap(i.fileno(), 0) as mm:
+        #         pos = mm.find(key_hash, 18)
+        #         while (pos % 11) > 0:
+        #             pos = mm.find(key_hash, pos)
+
+        #         mm.seek(pos + 11)
+        #         mm.write(stale_key_bytes)
 
     def __enter__(self):
         return self
@@ -459,19 +487,26 @@ class Arete(MutableMapping):
     #     self.close()
 
     def sync(self):
-        if self._write and self._updated:
-            self._sync_index()
+        if self._write and self._buffer_index:
             wb_pos = self._write_buffer.tell()
             if wb_pos > 0:
                 self._write_buffer.seek(0)
                 _ = self._file.write(self._write_buffer.read(wb_pos))
                 self._write_buffer.seek(0)
             self._file.flush()
+            self._sync_index()
 
     def _sync_index(self):
+        with io.open(self._index_path, 'ab') as i:
+            i.write(utils.serialize_index(self._buffer_index))
 
-        with io.open(self._index_path, 'wb') as i:
-            i.write(Zstd(1).compress(Pickle(5).dumps(self.index)))
+        for key in self._buffer_index:
+            if key in self._base_index:
+                del self._base_index[key]
+
+        self._base_index.update(self._buffer_index)
+        self._buffer_index = {}
+
 
 
 # def open(
