@@ -37,18 +37,20 @@ except:
 
 __all__ = ['Arete']
 
-hidden_keys = ('00~._stale', '01~._serializer', '02~._compressor')
+hidden_keys = (b'00~._stale', b'01~._serializer', b'02~._compressor')
 
 uuid_arete = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
 version = 1
 version_bytes = version.to_bytes(2, 'little', signed=False)
 
-lock_bytes = (-1).to_bytes(1, 'little', signed=True)
-unlock_bytes = (0).to_bytes(1, 'little', signed=True)
-stale_key_bytes = (0).to_bytes(8, 'little', signed=True)
+# lock_bytes = (-1).to_bytes(1, 'little', signed=True)
+# unlock_bytes = (0).to_bytes(1, 'little', signed=True)
+# stale_key_bytes = (0).to_bytes(8, 'little', signed=True)
 
 page_size = mmap.ALLOCATIONGRANULARITY
+
+n_buckets = 11
 
 #######################################################
 ### Serializers and compressors
@@ -135,6 +137,9 @@ class Lz4:
 
 file_path = '/media/nvme1/cache/arete/test.arete'
 file_path = '/media/nvme1/git/nzrec/data/node.arete'
+# n_bytes_file = 4
+# n_buckets = 11
+# key = b'$\xd4\xb2o^\x15\xce*\x02\xa3\x1b'
 # flag = 'n'
 # sync: bool = False
 # lock: bool = True
@@ -153,7 +158,7 @@ class Arete(object):
 
     """
 
-    def __init__(self, file_path: str, flag: str = "r", sync: bool = False, lock: bool = True, serializer = None, protocol: int = 5, compressor = None, compress_level: int = 1, write_buffer_size = 10000000):
+    def __init__(self, file_path: str, flag: str = "r", sync: bool = False, lock: bool = True, serializer = None, protocol: int = 5, compressor = None, compress_level: int = 1, write_buffer_size = 5000000, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4):
         """
 
         """
@@ -173,10 +178,14 @@ class Arete(object):
         else:
             raise ValueError("Invalid flag")
 
-        # self.db = db
+        # various attributes
         self._write = write
         self._write_buffer_size = write_buffer_size
         self._write_buffer_pos = 0
+        self._n_bytes_file = n_bytes_file
+        self._n_bytes_key = n_bytes_key
+        self._n_bytes_value = n_bytes_value
+        self._n_buckets = n_buckets
 
         self._index_path = pathlib.Path(str(file_path) + '.index')
 
@@ -184,19 +193,13 @@ class Arete(object):
         if fp_exists:
             if write:
                 self._file = io.open(file_path, 'r+b')
-                self._file.seek(18)
-                lock = int.from_bytes(self._file.read(1), 'little', signed=True)
-                if lock == -1:
-                    raise ValueError('File is already opened for writing.')
-                self._file.seek(18)
-                _ = self._file.write(lock_bytes)
-                self._file.flush()
-
                 self._write_buffer = mmap.mmap(-1, write_buffer_size)
+                self._buffer_index = {}
             else:
                 self._file = io.open(file_path, 'rb')
 
-            self._base_index = utils.deserialize_index(self._index_path, write_buffer_size)
+            self._mm = mmap.mmap(self._file.fileno(), 0)
+            self._data_pos = len(self._mm)
 
             self._serializer = pickle.loads(utils.get_value(self._file, self._base_index, b'01~._serializer'))
             self._compressor = pickle.loads(utils.get_value(self._file, self._base_index, b'02~._compressor'))
@@ -250,45 +253,42 @@ class Arete(object):
 
 
             ## Write uuid and version and Save encodings to new file
-            base_index = {}
-            buffer_index = {}
+            bucket_bytes = utils.create_initial_bucket_indexes(n_buckets, n_bytes_file)
+            self._buffer_index = {}
 
-            self._index_path.unlink(True)
+            # self._index_path.unlink(True)
 
             self._file = io.open(file_path, 'w+b', buffering=write_buffer_size)
 
             self._write_buffer = mmap.mmap(-1, write_buffer_size)
 
-            _ = self._file.write(uuid_arete + version_bytes + lock_bytes)
+            _ = self._file.write(uuid_arete + version_bytes + bucket_bytes)
             self._file.flush()
 
-            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, buffer_index, b'01~._serializer', pickle.dumps(self._serializer, protocol))
-            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, buffer_index, b'02~._compressor', pickle.dumps(self._compressor, protocol))
+            self._mm = mmap.mmap(self._file.fileno(), 0)
+            self._data_pos = len(self._mm)
 
-            self._base_index = base_index
-            self._buffer_index = buffer_index
-
-            with io.open(self._index_path, 'wb') as i:
-                pass
+            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'01~._serializer', pickle.dumps(self._serializer, protocol), self._n_bytes_key, self._n_bytes_value)
+            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'02~._compressor', pickle.dumps(self._compressor, protocol), self._n_bytes_key, self._n_bytes_value)
 
             self.sync()
 
 
-    # def _pre_key(self, key) -> bytes:
+    def _pre_key(self, key) -> bytes:
 
-    #     ## Serialize to bytes
-    #     if self._index_serializer is not None:
-    #         key = self._index_serializer.dumps(key)
+        ## Serialize to bytes
+        # if self._index_serializer is not None:
+        #     key = self._index_serializer.dumps(key)
 
-    #     return key
+        return key
 
-    # def _post_key(self, key: bytes):
+    def _post_key(self, key: bytes):
 
-    #     ## Serialize from bytes
-    #     if self._index_serializer is not None:
-    #         key = self._index_serializer.loads(key)
+        ## Serialize from bytes
+        # if self._index_serializer is not None:
+        #     key = self._index_serializer.loads(key)
 
-    #     return key
+        return key
 
     def _pre_value(self, value) -> bytes:
 
@@ -315,79 +315,84 @@ class Arete(object):
         return value
 
     def keys(self):
-        for key in self.index.keys():
+        for key in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, False, self._n_bytes_key, self._n_bytes_value):
             if key not in hidden_keys:
-                yield key
+                yield self._post_key(key)
 
     def items(self):
-        for key in self.keys():
+        for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value):
             if key not in hidden_keys:
-                yield key, self[key]
+                yield self._post_key(key), self._post_value(value)
 
     def values(self):
-        for key in self.keys():
+        for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value):
             if key not in hidden_keys:
-                yield self[key]
+                yield self._post_value(value)
 
     def __iter__(self):
         return self.keys()
 
     def __len__(self):
-        keys_len = len(self._base_index)
+        keys_len = len(self.keys())
         return keys_len - len(hidden_keys)
 
     def __contains__(self, key):
-        return key in self._base_index
+        return key in self.keys()
 
     def get(self, key, default=None):
-        value = utils.get_value(self._file, self._base_index, key)
+        key_hash = utils.hash_key(self._pre_key(key))
+        index_bucket = utils.get_index_bucket(key_hash)
+        bucket_index_pos = utils.get_bucket_index_pos(index_bucket, self._n_bytes_file)
+        bucket_pos = utils.get_bucket_pos(self._mm, bucket_index_pos, self._n_bytes_file)
+        data_block_pos = utils.get_data_block_pos(self._mm, key_hash, bucket_pos, self._data_pos, self._n_bytes_file)
+        value = utils.get_data_block(self._mm, data_block_pos, key=False, value=True, n_bytes_key=self._n_bytes_key, n_bytes_value=self._n_bytes_value)
 
         if value is None:
             return default
         else:
             return self._post_value(value)
 
-    def update(self, key_value_dict):
-        """
+    # def update(self, key_value_dict):
+    #     """
 
-        """
-        if self._write:
-            self._write_many_chunks(key_value_dict)
+    #     """
+    #     if self._write:
+    #         self._write_many_chunks(key_value_dict)
 
-            self.sync()
-        else:
-            raise ValueError('File is open for read only.')
+    #         self.sync()
+    #     else:
+    #         raise ValueError('File is open for read only.')
 
-    def _write_many_chunks(self, key_value_dict):
-        """
+    # def _write_many_chunks(self, key_value_dict):
+    #     """
 
-        """
-        self._file.seek(0, 2)
-        file_pos = self._file.tell()
+    #     """
+    #     self._file.seek(0, 2)
+    #     file_pos = self._file.tell()
 
-        write_bytes = bytearray()
-        for key, value in key_value_dict.items():
-            value = self._pre_value(value)
-            value_len_bytes = len(value)
+    #     write_bytes = bytearray()
+    #     for key, value in key_value_dict.items():
+    #         value = self._pre_value(value)
+    #         value_len_bytes = len(value)
 
-            key_len_bytes = len(key)
-            key_hash = blake2b(key, digest_size=11).digest()
+    #         key_len_bytes = len(key)
+    #         key_hash = blake2b(key, digest_size=11).digest()
 
-            if key_hash in self._buffer_index:
-                _ = self._buffer_index.pop(key_hash)
+    #         if key_hash in self._buffer_index:
+    #             _ = self._buffer_index.pop(key_hash)
 
-            # if key in self.index:
-            #     pos0 = self.index.pop(key)
-            #     self.index['00~._stale'].append(pos0)
+    #         # if key in self.index:
+    #         #     pos0 = self.index.pop(key)
+    #         #     self.index['00~._stale'].append(pos0)
 
-            self._buffer_index[key_hash] = file_pos
-            file_pos += 1 + key_len_bytes + 4 + value_len_bytes
+    #         self._buffer_index[key_hash] = file_pos
+    #         file_pos += 1 + key_len_bytes + 4 + value_len_bytes
 
-            write_bytes += key_len_bytes.to_bytes(1, 'little', signed=False) + key + value_len_bytes.to_bytes(4, 'little', signed=False) + value
+    #         write_bytes += key_len_bytes.to_bytes(1, 'little', signed=False) + key + value_len_bytes.to_bytes(4, 'little', signed=False) + value
 
-        new_n_bytes = self._file.write(write_bytes)
+    #     new_n_bytes = self._file.write(write_bytes)
 
-        return new_n_bytes
+    #     return new_n_bytes
 
 
     # def prune(self):
@@ -422,20 +427,20 @@ class Arete(object):
 
     def __setitem__(self, key, value):
         if self._write:
-            utils.write_chunk(self._file, self._write_buffer, self._write_buffer_size, self._buffer_index, key, self._pre_value(value))
+            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
         else:
             raise ValueError('File is open for read only.')
 
     def __delitem__(self, key):
-        if key not in self:
-            raise KeyError(key)
+        if self._write:
+            if key not in self:
+                raise KeyError(key)
 
-        key_hash = blake2b(key, digest_size=11).digest()
+            key_hash = utils.hash_key(key)
 
-        if key_hash in self._buffer_index:
-            _ = self._buffer_index.pop(key_hash)
-
-        self._buffer_index[key_hash] = 0
+            self._buffer_index[key_hash] = 0
+        else:
+            raise ValueError('File is open for read only.')
 
         # self.sync()
 
@@ -456,56 +461,40 @@ class Arete(object):
     def __exit__(self, *args):
         self.close()
 
-    def clear(self):
-        if self._write:
-            pos = max([self.index[key] for key in hidden_keys[1:]])
-            self._file.seek(pos)
-            value_len_bytes = int.from_bytes(self._file.read(4), 'little', signed=False)
-            self._file.truncate(pos + 4 + value_len_bytes)
-            for key in list(self.index.keys()):
-                if key not in hidden_keys:
-                    del self.index[key]
-            self.sync()
-        else:
-            raise ValueError('File is open for read only.')
+    # def clear(self):
+    #     if self._write:
+    #         pos = max([self.index[key] for key in hidden_keys[1:]])
+    #         self._file.seek(pos)
+    #         value_len_bytes = int.from_bytes(self._file.read(4), 'little', signed=False)
+    #         self._file.truncate(pos + 4 + value_len_bytes)
+    #         for key in list(self.index.keys()):
+    #             if key not in hidden_keys:
+    #                 del self.index[key]
+    #         self.sync()
+    #     else:
+    #         raise ValueError('File is open for read only.')
 
     def close(self):
         self.sync()
         if self._write:
             self._write_buffer.close()
-            self._file.seek(18)
-            _ = self._file.write(unlock_bytes)
-            self._file.flush()
 
+        self._mm.close()
         self._file.close()
-        try:
-            del self.index
-        except:
-            pass
 
     # def __del__(self):
     #     self.close()
 
     def sync(self):
-        if self._write and self._buffer_index:
-            wb_pos = self._write_buffer.tell()
-            if wb_pos > 0:
-                self._write_buffer.seek(0)
-                _ = self._file.write(self._write_buffer.read(wb_pos))
-                self._write_buffer.seek(0)
-            self._file.flush()
-            self._sync_index()
+        if self._write:
+            if self._buffer_index:
+                utils.flush_write_buffer(self._mm, self._write_buffer)
+                self._mm.flush()
+                self._file.flush()
+                self._sync_index()
 
     def _sync_index(self):
-        with io.open(self._index_path, 'ab') as i:
-            i.write(utils.serialize_index(self._buffer_index))
-
-        for key in self._buffer_index:
-            if key in self._base_index:
-                del self._base_index[key]
-
-        self._base_index.update(self._buffer_index)
-        self._buffer_index = {}
+        self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets)
 
 
 
