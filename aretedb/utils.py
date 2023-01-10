@@ -17,7 +17,7 @@ from time import time
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
 # old_special_bytes = b'\xfe\xff\xff\xff\xff\xff\xff\xff\xff'
 
-sub_index_init_pos = 18
+sub_index_init_pos = 24
 key_hash_len = 11
 
 ############################################
@@ -54,7 +54,7 @@ def create_initial_bucket_indexes(n_buckets, n_bytes_file):
     return bucket_index_bytes
 
 
-def get_index_bucket(key_hash, n_buckets=11):
+def get_index_bucket(key_hash, n_buckets):
     """
     The modulus of the int representation of the bytes hash puts the keys in evenly filled buckets.
     """
@@ -100,13 +100,16 @@ def get_data_block_pos(mm, key_hash, bucket_pos, data_pos, n_bytes_file):
     The data block relative position of 0 is a delete/ignore flag, so all data block relative positions have been shifted forward by 1.
     """
     # mm.seek(bucket_pos)
-    key_hash_pos = mm.find(key_hash, bucket_pos)
+    key_hash_pos = mm.find(key_hash, bucket_pos, data_pos)
+    bucket_block_len = key_hash_len + n_bytes_file
 
     if key_hash_pos == -1:
         raise KeyError(key_hash)
 
-    while (key_hash_pos - bucket_pos) % key_hash_len > 0:
-        key_hash_pos = mm.find(key_hash, key_hash_pos)
+    while (key_hash_pos - bucket_pos) % bucket_block_len > 0:
+        key_hash_pos = mm.find(key_hash, key_hash_pos, data_pos)
+        if key_hash_pos == -1:
+            raise KeyError(key_hash)
 
     mm.seek(key_hash_pos + key_hash_len)
     data_block_rel_pos = bytes_to_int(mm.read(n_bytes_file))
@@ -135,7 +138,7 @@ def get_data_block(mm, data_block_pos, key=False, value=False, n_bytes_key=1, n_
         return key, value
 
     elif key:
-        key_len = mm.read(n_bytes_key)
+        key_len = bytes_to_int(mm.read(n_bytes_key))
         mm.seek(n_bytes_value, 1)
         key = mm.read(key_len)
         return key
@@ -149,6 +152,20 @@ def get_data_block(mm, data_block_pos, key=False, value=False, n_bytes_key=1, n_
         return value
     else:
         raise ValueError('One or both key and value must be True.')
+
+
+def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets):
+    """
+    Combines everything necessary to return a value.
+    """
+    key_hash = hash_key(key)
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
+    bucket_pos = get_bucket_pos(mm, bucket_index_pos, n_bytes_file)
+    data_block_pos = get_data_block_pos(mm, key_hash, bucket_pos, data_pos, n_bytes_file)
+    value = get_data_block(mm, data_block_pos, key=False, value=True, n_bytes_key=n_bytes_key, n_bytes_value=n_bytes_value)
+
+    return value
 
 
 def iter_keys_values(mm, n_buckets, n_bytes_file, data_pos, key=False, value=False, n_bytes_key=1, n_bytes_value=4):
@@ -171,7 +188,7 @@ def iter_keys_values(mm, n_buckets, n_bytes_file, data_pos, key=False, value=Fal
 
         data_block_pos = data_pos + data_block_rel_pos - 1
 
-        return get_data_block(mm, data_block_pos, key, value, n_bytes_key, n_bytes_value)
+        yield get_data_block(mm, data_block_pos, key, value, n_bytes_key, n_bytes_value)
 
 
 def write_data_blocks(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, n_bytes_value):
@@ -195,6 +212,7 @@ def write_data_blocks(mm, write_buffer, write_buffer_size, buffer_index, data_po
         file_len += write_len
         mm.resize(file_len)
         new_n_bytes = mm.write(write_bytes)
+        # mm.flush()
         wb_pos = 0
     else:
         wb_space = write_buffer_size - wb_pos
@@ -223,6 +241,7 @@ def flush_write_buffer(mm, write_buffer):
         mm.resize(new_size)
         _ = mm.write(write_buffer.read(wb_pos))
         write_buffer.seek(0)
+        # mm.flush()
 
         return new_size
     else:
@@ -243,14 +262,13 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
     mm.move(new_data_pos, data_pos, file_len - data_pos)
 
     ## Organize the new indexes into the buckets
-    # The problem is here!!!!!!
     index1 = {}
     for key_hash, data_block_rel_pos in buffer_index.items():
         buffer_bytes = key_hash + int_to_bytes(data_block_rel_pos, n_bytes_file)
 
         bucket = get_index_bucket(key_hash, n_buckets)
         if bucket in index1:
-            index1[bucket] += index1[bucket] + buffer_bytes
+            index1[bucket] += buffer_bytes
         else:
             index1[bucket] = bytearray(buffer_bytes)
 
@@ -286,6 +304,7 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
 
     mm.seek(sub_index_init_pos)
     mm.write(new_bucket_index_bytes)
+    # mm.flush()
 
     buffer_index = {}
 

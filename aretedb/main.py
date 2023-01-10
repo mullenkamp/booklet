@@ -12,32 +12,33 @@ import inspect
 import gzip
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Generic, Iterator, Union
-import zstandard as zstd
 # from multiprocessing import shared_memory
-from hashlib import blake2b
+# from hashlib import blake2b
 
 import utils
 # from . import utils
 
 imports = {}
-imports['zstd'] = True
 try:
     import orjson
     imports['orjson'] = True
 except:
     imports['orjson'] = False
-
-
-try:
-    import lz4
-    imports['lz4'] = True
-except:
-    imports['lz4'] = False
+# try:
+#     import zstandard as zstd
+#     imports['zstd'] = True
+# except:
+#     imports['zstd'] = False
+# try:
+#     import lz4
+#     imports['lz4'] = True
+# except:
+#     imports['lz4'] = False
 
 
 __all__ = ['Arete']
 
-hidden_keys = (b'00~._stale', b'01~._serializer', b'02~._compressor')
+hidden_keys = (b'01~._value_serializer', b'02~._key_serializer')
 
 uuid_arete = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
@@ -48,19 +49,15 @@ version_bytes = version.to_bytes(2, 'little', signed=False)
 # unlock_bytes = (0).to_bytes(1, 'little', signed=True)
 # stale_key_bytes = (0).to_bytes(8, 'little', signed=True)
 
-page_size = mmap.ALLOCATIONGRANULARITY
-
-n_buckets = 11
+# page_size = mmap.ALLOCATIONGRANULARITY
 
 #######################################################
 ### Serializers and compressors
 
 ## Serializers
 class Pickle:
-    def __init__(self, protocol):
-        self.protocol = protocol
     def dumps(self, obj):
-        return pickle.dumps(obj, self.protocol)
+        return pickle.dumps(obj, 5)
     def loads(self, obj):
         return pickle.loads(obj)
 
@@ -94,31 +91,31 @@ class Str:
 
 
 ## Compressors
-class Gzip:
-    def __init__(self, compress_level):
-        self.compress_level = compress_level
-    def compress(self, obj):
-        return gzip.compress(obj, self.compress_level)
-    def decompress(self, obj):
-        return gzip.decompress(obj)
+# class Gzip:
+#     def __init__(self, compress_level):
+#         self.compress_level = compress_level
+#     def compress(self, obj):
+#         return gzip.compress(obj, self.compress_level)
+#     def decompress(self, obj):
+#         return gzip.decompress(obj)
 
 
-class Zstd:
-    def __init__(self, compress_level):
-        self.compress_level = compress_level
-    def compress(self, obj):
-        return zstd.compress(obj, self.compress_level)
-    def decompress(self, obj):
-        return zstd.decompress(obj)
+# class Zstd:
+#     def __init__(self, compress_level):
+#         self.compress_level = compress_level
+#     def compress(self, obj):
+#         return zstd.compress(obj, self.compress_level)
+#     def decompress(self, obj):
+#         return zstd.decompress(obj)
 
 
-class Lz4:
-    def __init__(self, compress_level):
-        self.compress_level = compress_level
-    def compress(self, obj):
-        return lz4.frame.compress(obj, self.compress_level)
-    def decompress(self, obj):
-        return lz4.frame.decompress(obj)
+# class Lz4:
+#     def __init__(self, compress_level):
+#         self.compress_level = compress_level
+#     def compress(self, obj):
+#         return lz4.frame.compress(obj, self.compress_level)
+#     def decompress(self, obj):
+#         return lz4.frame.decompress(obj)
 
 
 #######################################################
@@ -135,30 +132,33 @@ class Lz4:
 #         return '<Closed Dictionary>'
 
 
-file_path = '/media/nvme1/cache/arete/test.arete'
+# file_path = '/media/nvme1/cache/arete/test.arete'
 file_path = '/media/nvme1/git/nzrec/data/node.arete'
-# n_bytes_file = 4
-# n_buckets = 11
+n_bytes_file = 4
+n_bytes_key=1
+n_bytes_value=4
+n_buckets = 11
 # key = b'$\xd4\xb2o^\x15\xce*\x02\xa3\x1b'
+write_buffer_size = 5000000
 # flag = 'n'
-# sync: bool = False
+flag = 'r'
+sync: bool = False
 # lock: bool = True
 # serializer = 'pickle'
-# protocol: int = 5
+protocol: int = 5
 # compressor = None
 # compress_level: int = 1
 # index_serializer = 'str'
 
-# key = b'00~._serializer'
+key = b'00~._serializer'
 # value = pickle.dumps(Pickle(protocol), protocol)
 
 
-class Arete(object):
+class Arete(MutableMapping):
     """
 
     """
-
-    def __init__(self, file_path: str, flag: str = "r", sync: bool = False, lock: bool = True, serializer = None, protocol: int = 5, compressor = None, compress_level: int = 1, write_buffer_size = 5000000, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4):
+    def __init__(self, file_path: str, flag: str = "r", value_serializer = None, key_serializer = None, write_buffer_size = 5000000, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10000):
         """
 
         """
@@ -178,98 +178,110 @@ class Arete(object):
         else:
             raise ValueError("Invalid flag")
 
-        # various attributes
         self._write = write
         self._write_buffer_size = write_buffer_size
         self._write_buffer_pos = 0
-        self._n_bytes_file = n_bytes_file
-        self._n_bytes_key = n_bytes_key
-        self._n_bytes_value = n_bytes_value
-        self._n_buckets = n_buckets
 
-        self._index_path = pathlib.Path(str(file_path) + '.index')
-
-        ## Load or assign encodings
+        ## Load or assign encodings and attributes
         if fp_exists:
             if write:
                 self._file = io.open(file_path, 'r+b')
+                self._mm = mmap.mmap(self._file.fileno(), 0)
                 self._write_buffer = mmap.mmap(-1, write_buffer_size)
                 self._buffer_index = {}
             else:
                 self._file = io.open(file_path, 'rb')
+                self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
-            self._mm = mmap.mmap(self._file.fileno(), 0)
-            self._data_pos = len(self._mm)
+            ## Pull out base parameters
+            base_param_bytes = self._mm.read(utils.sub_index_init_pos)
+            sys_uuid = base_param_bytes[:16]
+            version = utils.bytes_to_int(base_param_bytes[16:18])
+            self._n_bytes_file = utils.bytes_to_int(base_param_bytes[18:19])
+            self._n_bytes_key = utils.bytes_to_int(base_param_bytes[19:20])
+            self._n_bytes_value = utils.bytes_to_int(base_param_bytes[20:21])
+            self._n_buckets = utils.bytes_to_int(base_param_bytes[21:24])
 
-            self._serializer = pickle.loads(utils.get_value(self._file, self._base_index, b'01~._serializer'))
-            self._compressor = pickle.loads(utils.get_value(self._file, self._base_index, b'02~._compressor'))
+            data_index_pos = utils.get_data_index_pos(self._n_buckets, self._n_bytes_file)
+            self._data_pos = utils.get_data_pos(self._mm, data_index_pos, self._n_bytes_file)
+
+            ## Pull out the serializers
+            self._value_serializer = pickle.loads(utils.get_value(self._mm, b'01~._value_serializer', self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets))
+            self._key_serializer = pickle.loads(utils.get_value(self._mm, b'02~._key_serializer', self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets))
+
         else:
             ## Value Serializer
-            if serializer is None:
-                self._serializer = None
-            elif serializer == 'str':
-                self._serializer = Str
-            elif serializer == 'pickle':
-                self._serializer = Pickle(protocol)
-            elif serializer == 'json':
-                self._serializer = Json
-            elif serializer == 'orjson':
+            if value_serializer is None:
+                self._value_serializer = None
+            elif value_serializer == 'str':
+                self._value_serializer = Str
+            elif value_serializer == 'pickle':
+                self._value_serializer = Pickle
+            elif value_serializer == 'json':
+                self._value_serializer = Json
+            elif value_serializer == 'orjson':
                 if imports['orjson']:
-                    self._serializer = Orjson
+                    self._value_serializer = Orjson
                 else:
                     raise ValueError('orjson could not be imported.')
-            elif inspect.isclass(serializer):
-                class_methods = dir(serializer)
+            elif inspect.isclass(value_serializer):
+                class_methods = dir(value_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
-                    self._serializer = serializer
+                    self._value_serializer = value_serializer
                 else:
                     raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
             else:
                 raise ValueError('value serializer must be one of None, str, pickle, json, orjson, or a serializer class with dumps and loads methods.')
 
-            ## Value Compressor
-            if compressor is None:
-                self._compressor = None
-            elif compressor == 'gzip':
-                self._compressor = Gzip(compress_level)
-            elif compressor == 'zstd':
-                if imports['zstd']:
-                    self._compressor = Zstd(compress_level)
+            ## Key Serializer
+            if key_serializer is None:
+                self._key_serializer = None
+            elif key_serializer == 'str':
+                self._key_serializer = Str
+            elif key_serializer == 'pickle':
+                self._key_serializer = Pickle
+            elif key_serializer == 'json':
+                self._key_serializer = Json
+            elif key_serializer == 'orjson':
+                if imports['orjson']:
+                    self._key_serializer = Orjson
                 else:
-                    raise ValueError('zstd could not be imported.')
-            elif compressor == 'lz4':
-                if imports['lz4']:
-                    self._compressor = Lz4(compress_level)
+                    raise ValueError('orjson could not be imported.')
+            elif inspect.isclass(key_serializer):
+                class_methods = dir(key_serializer)
+                if ('dumps' in class_methods) and ('loads' in class_methods):
+                    self._key_serializer = key_serializer
                 else:
-                    raise ValueError('lz4 could not be imported.')
-            elif inspect.isclass(compressor):
-                class_methods = dir(compressor)
-                if ('compress' in class_methods) and ('decompress' in class_methods):
-                    self._compressor = compressor(compress_level)
-                else:
-                    raise ValueError('If a class is passed for a compressor, then it must have compress and decompress methods as well as a compress_level parameter in the __init__.')
+                    raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
             else:
-                raise ValueError('compressor must be one of gzip, zstd, lz4, or a compressor class with compress and decompress methods.')
+                raise ValueError('serializer must be one of None, str, pickle, json, orjson, or a serializer class with dumps and loads methods.')
 
+            ## Write uuid, version, and other parameters and save encodings to new file
+            self._n_bytes_file = n_bytes_file
+            self._n_bytes_key = n_bytes_key
+            self._n_bytes_value = n_bytes_value
+            self._n_buckets = n_buckets
 
-            ## Write uuid and version and Save encodings to new file
+            n_bytes_file_bytes = utils.int_to_bytes(n_bytes_file, 1)
+            n_bytes_key_bytes = utils.int_to_bytes(n_bytes_key, 1)
+            n_bytes_value_bytes = utils.int_to_bytes(n_bytes_value, 1)
+            n_buckets_bytes = utils.int_to_bytes(n_buckets, 3)
+
             bucket_bytes = utils.create_initial_bucket_indexes(n_buckets, n_bytes_file)
-            self._buffer_index = {}
-
-            # self._index_path.unlink(True)
 
             self._file = io.open(file_path, 'w+b', buffering=write_buffer_size)
 
-            self._write_buffer = mmap.mmap(-1, write_buffer_size)
-
-            _ = self._file.write(uuid_arete + version_bytes + bucket_bytes)
+            _ = self._file.write(uuid_arete + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + bucket_bytes)
             self._file.flush()
+
+            self._write_buffer = mmap.mmap(-1, write_buffer_size)
+            self._buffer_index = {}
 
             self._mm = mmap.mmap(self._file.fileno(), 0)
             self._data_pos = len(self._mm)
 
-            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'01~._serializer', pickle.dumps(self._serializer, protocol), self._n_bytes_key, self._n_bytes_value)
-            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'02~._compressor', pickle.dumps(self._compressor, protocol), self._n_bytes_key, self._n_bytes_value)
+            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'01~._value_serializer', pickle.dumps(self._value_serializer, 5), self._n_bytes_key, self._n_bytes_value)
+            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'02~._key_serializer', pickle.dumps(self._key_serializer, 5), self._n_bytes_key, self._n_bytes_value)
 
             self.sync()
 
@@ -277,40 +289,32 @@ class Arete(object):
     def _pre_key(self, key) -> bytes:
 
         ## Serialize to bytes
-        # if self._index_serializer is not None:
-        #     key = self._index_serializer.dumps(key)
+        if self._key_serializer is not None:
+            key = self._key_serializer.dumps(key)
 
         return key
 
     def _post_key(self, key: bytes):
 
         ## Serialize from bytes
-        # if self._index_serializer is not None:
-        #     key = self._index_serializer.loads(key)
+        if self._key_serializer is not None:
+            key = self._key_serializer.loads(key)
 
         return key
 
     def _pre_value(self, value) -> bytes:
 
         ## Serialize to bytes
-        if self._serializer is not None:
-            value = self._serializer.dumps(value)
-
-        ## Compress bytes
-        if self._compressor is not None:
-            value = self._compressor.compress(value)
+        if self._value_serializer is not None:
+            value = self._value_serializer.dumps(value)
 
         return value
 
     def _post_value(self, value: bytes):
 
-        ## Decompress bytes
-        if self._compressor is not None:
-            value = self._compressor.decompress(value)
-
         ## Serialize from bytes
-        if self._serializer is not None:
-            value = self._serializer.loads(value)
+        if self._value_serializer is not None:
+            value = self._value_serializer.loads(value)
 
         return value
 
@@ -340,28 +344,24 @@ class Arete(object):
         return key in self.keys()
 
     def get(self, key, default=None):
-        key_hash = utils.hash_key(self._pre_key(key))
-        index_bucket = utils.get_index_bucket(key_hash)
-        bucket_index_pos = utils.get_bucket_index_pos(index_bucket, self._n_bytes_file)
-        bucket_pos = utils.get_bucket_pos(self._mm, bucket_index_pos, self._n_bytes_file)
-        data_block_pos = utils.get_data_block_pos(self._mm, key_hash, bucket_pos, self._data_pos, self._n_bytes_file)
-        value = utils.get_data_block(self._mm, data_block_pos, key=False, value=True, n_bytes_key=self._n_bytes_key, n_bytes_value=self._n_bytes_value)
+        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets)
 
         if value is None:
             return default
         else:
             return self._post_value(value)
 
-    # def update(self, key_value_dict):
-    #     """
+    def update(self, key_value_dict):
+        """
 
-    #     """
-    #     if self._write:
-    #         self._write_many_chunks(key_value_dict)
+        """
+        if self._write:
+            for key, value in key_value_dict.items():
+                self[key] = value
 
-    #         self.sync()
-    #     else:
-    #         raise ValueError('File is open for read only.')
+            self.sync()
+        else:
+            raise ValueError('File is open for read only.')
 
     # def _write_many_chunks(self, key_value_dict):
     #     """
@@ -437,23 +437,9 @@ class Arete(object):
                 raise KeyError(key)
 
             key_hash = utils.hash_key(key)
-
             self._buffer_index[key_hash] = 0
         else:
             raise ValueError('File is open for read only.')
-
-        # self.sync()
-
-        # key_hash = blake2b(key, digest_size=11).digest()
-
-        # with io.open(self._index_path, 'r+b') as i:
-        #     with mmap(i.fileno(), 0) as mm:
-        #         pos = mm.find(key_hash, 18)
-        #         while (pos % 11) > 0:
-        #             pos = mm.find(key_hash, pos)
-
-        #         mm.seek(pos + 11)
-        #         mm.write(stale_key_bytes)
 
     def __enter__(self):
         return self
@@ -461,18 +447,14 @@ class Arete(object):
     def __exit__(self, *args):
         self.close()
 
-    # def clear(self):
-    #     if self._write:
-    #         pos = max([self.index[key] for key in hidden_keys[1:]])
-    #         self._file.seek(pos)
-    #         value_len_bytes = int.from_bytes(self._file.read(4), 'little', signed=False)
-    #         self._file.truncate(pos + 4 + value_len_bytes)
-    #         for key in list(self.index.keys()):
-    #             if key not in hidden_keys:
-    #                 del self.index[key]
-    #         self.sync()
-    #     else:
-    #         raise ValueError('File is open for read only.')
+    def clear(self):
+        if self._write:
+            for key in self.keys():
+                key_hash = utils.hash_key(key)
+                self._buffer_index[key_hash] = 0
+            self.sync()
+        else:
+            raise ValueError('File is open for read only.')
 
     def close(self):
         self.sync()
@@ -489,9 +471,9 @@ class Arete(object):
         if self._write:
             if self._buffer_index:
                 utils.flush_write_buffer(self._mm, self._write_buffer)
-                self._mm.flush()
-                self._file.flush()
                 self._sync_index()
+            self._mm.flush()
+            self._file.flush()
 
     def _sync_index(self):
         self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets)
