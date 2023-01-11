@@ -29,8 +29,8 @@ Usage
 -----
 The docstrings have a lot of info about the classes and methods. Files should be opened with the booklet.open function. Read the docstrings of the open function for more details.
 
-Write data
-~~~~~~~~~~
+Write data using the context manager
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. code:: python
 
   import booklet
@@ -39,8 +39,8 @@ Write data
     db['test_key'] = ['one', 2, 'three', 4]
 
 
-Read data
-~~~~~~~~~
+Read data using the context manager
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. code:: python
 
   with booklet.open('test.book', 'r') as db:
@@ -48,9 +48,94 @@ Read data
 
 Notice that you don't need to pass serializer parameters when reading. Booklet stores this info on the initial file creation.
 
+
+Write data without using the context manager
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code:: python
+
+  import booklet
+
+  db = booklet.open('test.book', 'n', value_serializer='pickle', key_serializer='str')
+
+  db['test_key'] = ['one', 2, 'three', 4]
+  db['2nd_test_key'] = ['five', 6, 'seven', 8]
+
+  db.sync()
+  db.close()
+
+
+Read data without using the context manager
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code:: python
+
+  db = booklet.open('test.book', 'r')
+
+  test_data1 = db['test_key']
+  test_data2 = db['2nd_test_key']
+
+  db.close()
+
+
 Recommendations
 ~~~~~~~~~~~~~~~
 In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and (optionally) locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() at the end of a series of writes to ensure the data has been fully written to disk. And as with other dbm style APIs, the db.close() must be run to close the file and release locks. MultiThreading is safe for multiple readers and writers, but only multiple readers are safe with MultiProcessing.
+
+
+Custom serializers
+~~~~~~~~~~~~~~~~~~
+.. code:: python
+
+  import orjson
+
+  class Orjson:
+    def dumps(obj) -> bytes:
+        return orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_OMIT_MICROSECONDS | orjson.OPT_SERIALIZE_NUMPY)
+    def loads(obj: bytes):
+        return orjson.loads(obj)
+
+  with booklet.open('test.book', 'n', value_serializer=Orjson, key_serializer='str') as db:
+    db['test_key'] = ['one', 2, 'three', 4]
+
+
+The Orjson class is actually already built into the package. You can pass the string 'orjson' to either serializer parameters to use the above serializer. This is just an example of a serializer.
+
+Here's another example with compression.
+
+.. code:: python
+
+  import orjson
+  import zstandard as zstd
+
+  class OrjsonZstd:
+    def dumps(obj) -> bytes:
+        return zstd.compress(orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_OMIT_MICROSECONDS | orjson.OPT_SERIALIZE_NUMPY))
+    def loads(obj: bytes):
+        return orjson.loads(zstd.decompress(obj))
+
+  with booklet.open('test.book', 'n', value_serializer=OrjsonZstd, key_serializer='str') as db:
+    db['big_test'] = list(range(1000000))
+
+  with booklet.open('test.book', 'r') as db:
+    big_test_data = db['big_test']
+
+
+The open flag follows the standard dbm options.
++---------+-------------------------------------------+
+| Value   | Meaning                                   |
++=========+===========================================+
+| ``'r'`` | Open existing database for reading only   |
+|         | (default)                                 |
++---------+-------------------------------------------+
+| ``'w'`` | Open existing database for reading and    |
+|         | writing                                   |
++---------+-------------------------------------------+
+| ``'c'`` | Open database for reading and writing,    |
+|         | creating it if it doesn't exist           |
++---------+-------------------------------------------+
+| ``'n'`` | Always create a new, empty database, open |
+|         | for reading and writing                   |
++---------+-------------------------------------------+
+
 
 TODO
 ~~~~~
