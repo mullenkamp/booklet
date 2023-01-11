@@ -1,5 +1,5 @@
-{% set name = "shockdb" %}
-{% set version = "0.0.9" %}
+{% set name = "booklet" %}
+{% set version = "0.0.3" %}
 # {% set sha256 = "72a156e328247c91cb7f5440ffa98069c0090892f8d9d07fd57e36c0611a0403" %}
 
 # sha256 is the prefered checksum -- you can get it for a file with:
@@ -39,13 +39,13 @@ requirements:
 
 test:
   imports:
-    - shockdb
+    - booklet
 
 about:
-  home: https://github.com/mullenkamp/shockdb
+  home: https://github.com/mullenkamp/booklet
   license: Apache License 2.0
   license_family: APACHE
-  summary: A python wrapper on lmdb for a simple dbm key-value database
-  description: A python wrapper on lmdb for a simple dbm key-value database
-  doc_url: https://github.com/mullenkamp/shockdb
+  summary: A python key-value file database
+  description: A python key-value file database
+  doc_url: https://github.com/mullenkamp/booklet
   dev_url: ''

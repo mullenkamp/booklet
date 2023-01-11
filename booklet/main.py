@@ -15,8 +15,8 @@ from typing import Any, Generic, Iterator, Union
 # from multiprocessing import shared_memory
 # from hashlib import blake2b
 
-import utils
-# from . import utils
+# import utils
+from . import utils
 
 imports = {}
 try:
@@ -36,9 +36,9 @@ except:
 #     imports['lz4'] = False
 
 
-__all__ = ['Arete']
+__all__ = ['Booklet', 'open']
 
-hidden_keys = (b'01~._value_serializer', b'02~._key_serializer')
+hidden_keys = set((b'01~._value_serializer', b'02~._key_serializer'))
 
 uuid_arete = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
@@ -154,7 +154,7 @@ class Str:
 # value = pickle.dumps(Pickle(protocol), protocol)
 
 
-class Arete(MutableMapping):
+class Booklet(MutableMapping):
     """
 
     """
@@ -465,57 +465,65 @@ class Arete(MutableMapping):
 
 
 
-# def open(
-#     file_path: str, flag: str = "r", sync: bool = False, lock: bool = True, serializer = None, protocol: int = 5, compressor = None, compress_level: int = 1, index_serializer = None):
-#     """
-#     Open a persistent dictionary for reading and writing. On creation of the file, the encodings (serializer and compressor) will be written to the file. Any reads and new writes do not need to be opened with the encoding parameters. Currently, ShockDB uses pickle to serialize the encodings to the file.
+def open(
+    file_path: str, flag: str = "r", write_buffer_size = 5000000, value_serializer = None, key_serializer = None, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10000):
+    """
+    Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any reads and new writes do not need to be opened with the encoding parameters. Currently, it uses pickle to serialize the serializers to the file.
 
-#     Parameters
-#     -----------
-#     file_path : str or pathlib.Path
-#         It must be a path to a local file location.
+    Parameters
+    -----------
+    file_path : str or pathlib.Path
+        It must be a path to a local file location.
 
-#     flag : str
-#         Flag associated with how the file is opened according to the dbm style. See below for details.
+    flag : str
+        Flag associated with how the file is opened according to the dbm style. See below for details.
 
-#     serializer : str, class, or None
-#         The serializer to use to convert the input object to bytes. Currently, must be one of pickle, json, orjson, or None. If the objects can be serialized to json, then use orjson. It's super fast and you won't have the pickle issues.
-#         If None, then the input values must be bytes.
-#         A class with dumps and loads methods can also be passed as a custom serializer.
+    write_buffer_size : int
+        The buffer memory size used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
+        This is only used when file is open for writing.
 
-#     protocol : int
-#         The pickle protocol to use.
+    value_serializer : str, class, or None
+        The serializer to use to convert the input value to bytes. Currently, must be one of pickle, json, orjson, None, or a custom serialize class. If the objects can be serialized to json, then use orjson. It's super fast and you won't have the pickle issues.
+        If None, then the input values must be bytes.
+        If a custom class is passed, then it must have dumps and loads methods.
 
-#     compressor : str, class, or None
-#         The compressor to use to compress the pickle object before being written. Currently, only zstd is accepted.
-#         The amount of compression will vary wildly depending on the input object and the serializer used. It's definitely worth doing some testing before using a compressor. Saying that...if you serialize to json, you'll likely get a lot of benefit from a fast compressor.
-#         A class with compress and decompress methods can also be passed as a custom serializer. The class also needs a compress_level parameter in the __init__.
+    key_serializer : str, class, or None
+        Similar to the value_serializer, except for the keys.
 
-#     compress_level : int
-#         The compression level for the compressor.
+    n_bytes_file : int
+        The number of bytes to represent an integer of the max size of the file. For example, the default of 4 can allow for a file size of ~4.3 GB. A value of 5 can allow for a file size of 1.1 TB. You shouldn't need a bigger value than 5...
 
-#     Returns
-#     -------
-#     Shock
+    n_bytes_key : int
+        The number of bytes to represent an integer of the max length of each key.
 
-#     The optional *flag* argument can be:
+    n_bytes_value : int
+        The number of bytes to represent an integer of the max length of each value.
 
-#    +---------+-------------------------------------------+
-#    | Value   | Meaning                                   |
-#    +=========+===========================================+
-#    | ``'r'`` | Open existing database for reading only   |
-#    |         | (default)                                 |
-#    +---------+-------------------------------------------+
-#    | ``'w'`` | Open existing database for reading and    |
-#    |         | writing                                   |
-#    +---------+-------------------------------------------+
-#    | ``'c'`` | Open database for reading and writing,    |
-#    |         | creating it if it doesn't exist           |
-#    +---------+-------------------------------------------+
-#    | ``'n'`` | Always create a new, empty database, open |
-#    |         | for reading and writing                   |
-#    +---------+-------------------------------------------+
+    n_buckets : int
+        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance.
 
-#     """
+    Returns
+    -------
+    Booklet
 
-#     return Arete(file_path, flag, sync, lock, serializer, protocol, compressor, compress_level, index_serializer)
+    The optional *flag* argument can be:
+
+    +---------+-------------------------------------------+
+    | Value   | Meaning                                   |
+    +=========+===========================================+
+    | ``'r'`` | Open existing database for reading only   |
+    |         | (default)                                 |
+    +---------+-------------------------------------------+
+    | ``'w'`` | Open existing database for reading and    |
+    |         | writing                                   |
+    +---------+-------------------------------------------+
+    | ``'c'`` | Open database for reading and writing,    |
+    |         | creating it if it doesn't exist           |
+    +---------+-------------------------------------------+
+    | ``'n'`` | Always create a new, empty database, open |
+    |         | for reading and writing                   |
+    +---------+-------------------------------------------+
+
+    """
+
+    return Booklet(file_path, flag, value_serializer, key_serializer, write_buffer_size, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets)

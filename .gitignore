@@ -9,7 +9,6 @@ dist/
 *~
 *.idea
 .pytest_cache/
-# modules/hydro/__pycache__/
 
 # due to using tox and pytest
 .tox
@@ -19,4 +18,3 @@ dist/
 # param*.yml
 /.project
 /.pydevproject
-hdf5tools/tests/utest_*.py

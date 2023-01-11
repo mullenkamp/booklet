@@ -197,7 +197,7 @@ def iter_keys_values(mm, n_buckets, n_bytes_file, data_pos, key=False, value=Fal
 
         data_block_pos = data_pos + data_block_rel_pos - 1
 
-        get_data_block(mm, data_block_pos, key, value, n_bytes_key, n_bytes_value)
+        yield get_data_block(mm, data_block_pos, key, value, n_bytes_key, n_bytes_value)
 
 
 def write_data_blocks(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, n_bytes_value):
@@ -311,7 +311,7 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
 
     new_bucket_index_bytes += int_to_bytes(buckets_end_pos, n_bytes_file)
 
-    print(n_new_indexes)
+    # print(n_new_indexes)
 
     mm.seek(sub_index_init_pos)
     mm.write(new_bucket_index_bytes)

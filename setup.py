@@ -7,10 +7,10 @@ import os
 here = os.path.abspath(os.path.dirname(__file__))
 
 # General parameters
-name = 'shelflet'
-main_package = 'shelflet'
-version = '0.1.5'
-descrip = 'The Python shelve module except with optional serializers and compression to make smaller shelves!'
+name = 'booklet'
+main_package = 'booklet'
+version = '0.0.3'
+descrip = 'A python key-value file database'
 
 # The below code is for readthedocs. To have sphinx/readthedocs interact with
 # the contained package, readthedocs needs to build the package. But the dependencies
@@ -72,13 +72,13 @@ setup(
     #
     # This field corresponds to the "Description" metadata field:
     # https://packaging.python.org/specifications/core-metadata/#description-optional
-    long_description='',  # Optional
+    long_description=long_description,  # Optional
 
     # This should be a valid link to your project's main homepage.
     #
     # This field corresponds to the "Home-Page" metadata field:
     # https://packaging.python.org/specifications/core-metadata/#home-page-optional
-    url='https://github.com/mullenkamp/shelflet',  # Optional
+    url='https://github.com/mullenkamp/booklet',  # Optional
 
     # This should be your name or the name of the organization which owns the
     # project.
@@ -115,7 +115,7 @@ setup(
     # project page. What does your project relate to?
     #
     # Note that this is a string of words separated by whitespace, not a list.
-    keywords='shelve',  # Optional
+    keywords='shelve dbm',  # Optional
 
     # You can just specify package directories manually here if your project is
     # simple. Or you can use find_packages().
