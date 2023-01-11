@@ -9,7 +9,6 @@ import pickle
 import json
 import pathlib
 import inspect
-import gzip
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Generic, Iterator, Union
 # from multiprocessing import shared_memory
@@ -34,9 +33,6 @@ except:
 #     imports['lz4'] = True
 # except:
 #     imports['lz4'] = False
-
-
-__all__ = ['Booklet', 'open']
 
 hidden_keys = set((b'01~._value_serializer', b'02~._key_serializer'))
 
@@ -195,8 +191,11 @@ class Booklet(MutableMapping):
 
             ## Pull out base parameters
             base_param_bytes = self._mm.read(utils.sub_index_init_pos)
+
+            # TODO: Run uuid and version check at some point...
             sys_uuid = base_param_bytes[:16]
             version = utils.bytes_to_int(base_param_bytes[16:18])
+
             self._n_bytes_file = utils.bytes_to_int(base_param_bytes[18:19])
             self._n_bytes_key = utils.bytes_to_int(base_param_bytes[19:20])
             self._n_bytes_value = utils.bytes_to_int(base_param_bytes[20:21])
