@@ -119,7 +119,8 @@ Here's another example with compression.
     big_test_data = db['big_test']
 
 
-The open flag follows the standard dbm options.
+The open flag follows the standard dbm options:
+
 +---------+-------------------------------------------+
 | Value   | Meaning                                   |
 +=========+===========================================+
