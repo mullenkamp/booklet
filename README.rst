@@ -52,6 +52,10 @@ Recommendations
 ~~~~~~~~~~~~~~~
 In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and (optionally) locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() at the end of a series of writes to ensure the data has been fully written to disk. And as with other dbm style APIs, the db.close() must be run to close the file and release locks. MultiThreading is safe for multiple readers and writers, but only multiple readers are safe with MultiProcessing.
 
+TODO
+~~~~~
+I need to write a lot more tests for the functionality. I also need to figure out why the prune function does not work...Currently, stale data cannot be removed from a book, but this will be possible in the future.
+
 
 Benchmarks
 -----------
