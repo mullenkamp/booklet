@@ -133,24 +133,24 @@ class Str:
 
 
 # file_path = '/media/nvme1/cache/arete/test.arete'
-file_path = '/media/nvme1/git/nzrec/data/node.arete'
-n_bytes_file = 4
-n_bytes_key=1
-n_bytes_value=4
-n_buckets = 11
+# file_path = '/media/nvme1/git/nzrec/data/node.arete'
+# n_bytes_file = 4
+# n_bytes_key=1
+# n_bytes_value=4
+# n_buckets = 11
 # key = b'$\xd4\xb2o^\x15\xce*\x02\xa3\x1b'
-write_buffer_size = 5000000
+# write_buffer_size = 5000000
 # flag = 'n'
-flag = 'r'
-sync: bool = False
+# flag = 'r'
+# sync: bool = False
 # lock: bool = True
 # serializer = 'pickle'
-protocol: int = 5
+# protocol: int = 5
 # compressor = None
 # compress_level: int = 1
 # index_serializer = 'str'
 
-key = b'00~._serializer'
+# key = b'00~._serializer'
 # value = pickle.dumps(Pickle(protocol), protocol)
 
 
@@ -399,27 +399,12 @@ class Arete(MutableMapping):
     #     """
     #     Prunes the old keys and associated values. Returns the recovered space in bytes.
     #     """
-    #     if self._write and self.index['00~._stale']:
-    #         recovered_space = utils.prune_file(self._file, self.index)
+    #     if self._write:
+    #         self._data_pos, recovered_space = utils.prune_file(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value)
     #     else:
     #         raise ValueError('File is open for read only.')
 
     #     return recovered_space
-
-
-
-
-
-    # def reorganize(self):
-    #     """
-    #     Only applies to gdbm.
-    #     If you have carried out a lot of deletions and would like to shrink the space used by the gdbm file, this routine will reorganize the database. gdbm objects will not shorten the length of a database file except by using this reorganization; otherwise, deleted file space will be kept and reused as new (key, value) pairs are added.
-    #     """
-    #     if hasattr(self.env, 'reorganize'):
-    #         self.env.reorganize()
-    #     else:
-    #         raise ValueError('reorganize is unavailable.')
-    #     return
 
     def __getitem__(self, key):
 
@@ -436,7 +421,7 @@ class Arete(MutableMapping):
             if key not in self:
                 raise KeyError(key)
 
-            key_hash = utils.hash_key(key)
+            key_hash = utils.hash_key(self._pre_key(key))
             self._buffer_index[key_hash] = 0
         else:
             raise ValueError('File is open for read only.')
@@ -476,7 +461,7 @@ class Arete(MutableMapping):
             self._file.flush()
 
     def _sync_index(self):
-        self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets)
+        self._data_pos, self._buffer_index = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets)
 
 
 
