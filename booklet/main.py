@@ -17,6 +17,11 @@ from typing import Any, Generic, Iterator, Union
 # import utils
 from . import utils
 
+try:
+    import dill as pickle
+except:
+    pass
+
 imports = {}
 try:
     import orjson
@@ -52,21 +57,21 @@ version_bytes = version.to_bytes(2, 'little', signed=False)
 
 ## Serializers
 class Pickle:
-    def dumps(self, obj):
+    def dumps(obj):
         return pickle.dumps(obj, 5)
-    def loads(self, obj):
+    def loads(obj):
         return pickle.loads(obj)
 
 
 class Json:
-    def dumps(obj: Any) -> bytes:
+    def dumps(obj):
         return json.dumps(obj).encode()
     def loads(obj):
         return json.loads(obj.decode())
 
 
 class Orjson:
-    def dumps(obj: Any) -> bytes:
+    def dumps(obj):
         return orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_OMIT_MICROSECONDS | orjson.OPT_SERIALIZE_NUMPY)
     def loads(obj):
         return orjson.loads(obj)

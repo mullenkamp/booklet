@@ -5,7 +5,6 @@ Introduction
 ------------
 Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. The API is designed to use all of the same python dictionary methods python programmers are used to in addition to the typical dbm methods.
 
-
 Installation
 ------------
 Install via pip::
@@ -22,7 +21,7 @@ I'll probably put it on conda-forge once I feel like it's up to an appropriate s
 
 Serialization
 -----------------------------
-Both the keys and values stored in Booklet must be bytes when written to disk. This is the default when "open" is called. Booklet allows for various serializers to be used for taking input keys and values and converting them to bytes. The in-build serializers include pickle, str, json, and orjson (if orjson is installed). If you want to serialize to json, then it is highly recommended to use orjson as it is substantially faster than the standard json python module.
+Both the keys and values stored in Booklet must be bytes when written to disk. This is the default when "open" is called. Booklet allows for various serializers to be used for taking input keys and values and converting them to bytes. The in-build serializers include pickle, str, json, and orjson (if orjson is installed). If you want to serialize to json, then it is highly recommended to use orjson as it is substantially faster than the standard json python module. If the user has installed the dill python package, it will use this instead of pickle. The dill package will allow the serializers to be more independent from the original source of the serializer classes. Pickle will only reference classes and functions back to the source scripts rather than storing them directly.
 The user can also pass custom serializers to the key_serializer and value_serializer parameters. These must have "dumps" and "loads" static methods. This allows the user to chain a serializer and a compressor together if desired.
 
 Usage
@@ -88,9 +87,9 @@ Custom serializers
   import orjson
 
   class Orjson:
-    def dumps(obj) -> bytes:
+    def dumps(obj):
         return orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_OMIT_MICROSECONDS | orjson.OPT_SERIALIZE_NUMPY)
-    def loads(obj: bytes):
+    def loads(obj):
         return orjson.loads(obj)
 
   with booklet.open('test.book', 'n', value_serializer=Orjson, key_serializer='str') as db:
@@ -107,9 +106,9 @@ Here's another example with compression.
   import zstandard as zstd
 
   class OrjsonZstd:
-    def dumps(obj) -> bytes:
+    def dumps(obj):
         return zstd.compress(orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_OMIT_MICROSECONDS | orjson.OPT_SERIALIZE_NUMPY))
-    def loads(obj: bytes):
+    def loads(obj):
         return orjson.loads(zstd.decompress(obj))
 
   with booklet.open('test.book', 'n', value_serializer=OrjsonZstd, key_serializer='str') as db:
