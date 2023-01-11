@@ -34,7 +34,7 @@ Write data using the context manager
 
   import booklet
 
-  with booklet.open('test.book', 'n', value_serializer='pickle', key_serializer='str') as db:
+  with booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str') as db:
     db['test_key'] = ['one', 2, 'three', 4]
 
 
@@ -42,7 +42,7 @@ Read data using the context manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. code:: python
 
-  with booklet.open('test.book', 'r') as db:
+  with booklet.open('test.blt', 'r') as db:
     test_data = db['test_key']
 
 Notice that you don't need to pass serializer parameters when reading. Booklet stores this info on the initial file creation.
@@ -54,7 +54,7 @@ Write data without using the context manager
 
   import booklet
 
-  db = booklet.open('test.book', 'n', value_serializer='pickle', key_serializer='str')
+  db = booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str')
 
   db['test_key'] = ['one', 2, 'three', 4]
   db['2nd_test_key'] = ['five', 6, 'seven', 8]
@@ -67,7 +67,7 @@ Read data without using the context manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. code:: python
 
-  db = booklet.open('test.book', 'r')
+  db = booklet.open('test.blt', 'r')
 
   test_data1 = db['test_key']
   test_data2 = db['2nd_test_key']
@@ -92,7 +92,7 @@ Custom serializers
     def loads(obj):
         return orjson.loads(obj)
 
-  with booklet.open('test.book', 'n', value_serializer=Orjson, key_serializer='str') as db:
+  with booklet.open('test.blt', 'n', value_serializer=Orjson, key_serializer='str') as db:
     db['test_key'] = ['one', 2, 'three', 4]
 
 
@@ -111,10 +111,10 @@ Here's another example with compression.
     def loads(obj):
         return orjson.loads(zstd.decompress(obj))
 
-  with booklet.open('test.book', 'n', value_serializer=OrjsonZstd, key_serializer='str') as db:
+  with booklet.open('test.blt', 'n', value_serializer=OrjsonZstd, key_serializer='str') as db:
     db['big_test'] = list(range(1000000))
 
-  with booklet.open('test.book', 'r') as db:
+  with booklet.open('test.blt', 'r') as db:
     big_test_data = db['big_test']
 
 
