@@ -16,7 +16,7 @@ from time import time
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
 # old_special_bytes = b'\xfe\xff\xff\xff\xff\xff\xff\xff\xff'
 
-sub_index_init_pos = 26
+sub_index_init_pos = 28
 key_hash_len = 13
 
 ############################################

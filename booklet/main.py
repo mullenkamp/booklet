@@ -5,8 +5,6 @@
 """
 import io
 import mmap
-import pickle
-import json
 import pathlib
 import inspect
 from collections.abc import Mapping, MutableMapping
@@ -18,34 +16,8 @@ from typing import Any, Generic, Iterator, Union
 # import utils
 from . import utils
 
-imports = {}
-# try:
-#     import dill
-#     imports['dill'] = True
-# except:
-#     pass
-try:
-    import orjson
-    imports['orjson'] = True
-except:
-    imports['orjson'] = False
-try:
-    import zstandard as zstd
-    imports['zstd'] = True
-except:
-    imports['zstd'] = False
-try:
-    import numpy as np
-    imports['numpy'] = True
-except:
-    imports['numpy'] = False
-# try:
-#     import lz4
-#     imports['lz4'] = True
-# except:
-#     imports['lz4'] = False
-
-hidden_keys = set((b'01~._value_serializer', b'02~._key_serializer'))
+# import serializers
+from . import serializers
 
 uuid_arete = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
@@ -57,94 +29,6 @@ version_bytes = version.to_bytes(2, 'little', signed=False)
 # stale_key_bytes = (0).to_bytes(8, 'little', signed=True)
 
 # page_size = mmap.ALLOCATIONGRANULARITY
-
-#######################################################
-### Serializers and compressors
-
-## Serializers
-class Pickle:
-    def dumps(obj):
-        return pickle.dumps(obj, 5)
-    def loads(obj):
-        return pickle.loads(obj)
-
-
-class Json:
-    def dumps(obj):
-        return json.dumps(obj).encode()
-    def loads(obj):
-        return json.loads(obj.decode())
-
-
-class Orjson:
-    def dumps(obj):
-        return orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_OMIT_MICROSECONDS | orjson.OPT_SERIALIZE_NUMPY)
-    def loads(obj):
-        return orjson.loads(obj)
-
-
-class Str:
-    def dumps(obj):
-        return obj.encode()
-    def loads(obj):
-        return obj.decode()
-
-
-class PickleZstd:
-    def dumps(obj):
-        return zstd.compress(pickle.dumps(obj, 5))
-    def loads(obj):
-        return pickle.loads(zstd.decompress(obj))
-
-
-class NumpyInt4:
-    def dumps(obj):
-        return obj.astype('i4').tobytes()
-    def loads(obj):
-        return np.frombuffer(obj, 'i4')
-
-class Uint4:
-    def dumps(obj):
-        return obj.to_bytes(4, 'little', signed=False)
-    def loads(obj):
-        return int.from_bytes(obj, 'little', signed=False)
-
-class Int4:
-    def dumps(obj):
-        return obj.to_bytes(4, 'little', signed=True)
-    def loads(obj):
-        return int.from_bytes(obj, 'little', signed=True)
-
-
-## Compressors
-# class Gzip:
-#     def __init__(self, compress_level):
-#         self.compress_level = compress_level
-#     def compress(self, obj):
-#         return gzip.compress(obj, self.compress_level)
-#     def decompress(self, obj):
-#         return gzip.decompress(obj)
-
-
-# class Zstd:
-#     def __init__(self, compress_level):
-#         self.compress_level = compress_level
-#     def compress(self, obj):
-#         return zstd.compress(obj, self.compress_level)
-#     def decompress(self, obj):
-#         return zstd.decompress(obj)
-
-
-# class Lz4:
-#     def __init__(self, compress_level):
-#         self.compress_level = compress_level
-#     def compress(self, obj):
-#         return lz4.frame.compress(obj, self.compress_level)
-#     def decompress(self, obj):
-#         return lz4.frame.decompress(obj)
-
-
-serial_dict = {'pickle': Pickle, 'json': Json, 'orjson': Orjson, 'str': Str, 'pickle_zstd': PickleZstd, 'numpy_int4': NumpyInt4, 'uint4': Uint4, 'int4': Int4}
 
 
 #######################################################
@@ -233,69 +117,67 @@ class Booklet(MutableMapping):
             self._n_bytes_key = utils.bytes_to_int(base_param_bytes[19:20])
             self._n_bytes_value = utils.bytes_to_int(base_param_bytes[20:21])
             self._n_buckets = utils.bytes_to_int(base_param_bytes[21:24])
-            saved_value_serializer = utils.bytes_to_int(base_param_bytes[24:25])
-            saved_key_serializer = utils.bytes_to_int(base_param_bytes[25:26])
+            saved_value_serializer = utils.bytes_to_int(base_param_bytes[24:26])
+            saved_key_serializer = utils.bytes_to_int(base_param_bytes[26:28])
 
             data_index_pos = utils.get_data_index_pos(self._n_buckets, self._n_bytes_file)
             self._data_pos = utils.get_data_pos(self._mm, data_index_pos, self._n_bytes_file)
 
             ## Pull out the serializers
-            if saved_value_serializer == 1:
-                self._value_serializer = pickle.loads(utils.get_value(self._mm, b'01~._value_serializer', self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets))
+            if saved_value_serializer > 0:
+                self._value_serializer = serializers.serial_int_dict[saved_value_serializer]
+            elif value_serializer is None:
+                raise ValueError('value serializer must be a serializer class with dumps and loads methods.')
             elif inspect.isclass(value_serializer):
                 class_methods = dir(value_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
                     self._value_serializer = value_serializer
                 else:
-                    raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
+                    raise ValueError('If a custom class is passed for a serializer, then it must have dumps and loads methods.')
             else:
-                raise ValueError('value serializer must be a serializer class with dumps and loads methods.')
+                raise ValueError('How did you mess up value_serializer so bad?!')
 
-            if saved_key_serializer == 1:
-                self._key_serializer = pickle.loads(utils.get_value(self._mm, b'02~._key_serializer', self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets))
+            if saved_key_serializer > 0:
+                self._key_serializer = serializers.serial_int_dict[saved_key_serializer]
+            elif key_serializer is None:
+                raise ValueError('key serializer must be a serializer class with dumps and loads methods.')
             elif inspect.isclass(key_serializer):
                 class_methods = dir(key_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
                     self._key_serializer = key_serializer
                 else:
-                    raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
+                    raise ValueError('If a custom class is passed for a serializer, then it must have dumps and loads methods.')
             else:
-                raise ValueError('serializer must be a serializer class with dumps and loads methods.')
+                raise ValueError('How did you mess up key_serializer so bad?!')
 
         else:
             ## Value Serializer
-            if value_serializer is None:
-                self._value_serializer = None
-                save_value_serializer = True
-            elif isinstance(value_serializer, str):
-                self._value_serializer = serial_dict[value_serializer]
-                save_value_serializer = True
+            if value_serializer in serializers.serial_name_dict:
+                value_serializer_code = serializers.serial_name_dict[value_serializer]
+                self._value_serializer = serializers.serial_int_dict[value_serializer_code]
             elif inspect.isclass(value_serializer):
                 class_methods = dir(value_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
                     self._value_serializer = value_serializer
-                    save_value_serializer = False
+                    value_serializer_code = 0
                 else:
                     raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
             else:
-                raise ValueError('value serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serial_dict.keys())))
+                raise ValueError('value serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())))
 
             ## Key Serializer
-            if key_serializer is None:
-                self._key_serializer = None
-                save_key_serializer = True
-            elif isinstance(key_serializer, str):
-                self._key_serializer = serial_dict[key_serializer]
-                save_key_serializer = True
+            if key_serializer in serializers.serial_name_dict:
+                key_serializer_code = serializers.serial_name_dict[key_serializer]
+                self._key_serializer = serializers.serial_int_dict[key_serializer_code]
             elif inspect.isclass(key_serializer):
                 class_methods = dir(key_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
                     self._key_serializer = key_serializer
-                    save_key_serializer = False
+                    key_serializer_code = 0
                 else:
                     raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
             else:
-                raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serial_dict.keys())))
+                raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())))
 
             ## Write uuid, version, and other parameters and save encodings to new file
             self._n_bytes_file = n_bytes_file
@@ -307,15 +189,8 @@ class Booklet(MutableMapping):
             n_bytes_key_bytes = utils.int_to_bytes(n_bytes_key, 1)
             n_bytes_value_bytes = utils.int_to_bytes(n_bytes_value, 1)
             n_buckets_bytes = utils.int_to_bytes(n_buckets, 3)
-            if save_value_serializer:
-                saved_value_serializer_bytes = utils.int_to_bytes(1, 1)
-            else:
-                saved_value_serializer_bytes = utils.int_to_bytes(0, 1)
-            if save_key_serializer:
-                saved_key_serializer_bytes = utils.int_to_bytes(1, 1)
-            else:
-                saved_key_serializer_bytes = utils.int_to_bytes(0, 1)
-
+            saved_value_serializer_bytes = utils.int_to_bytes(value_serializer_code, 2)
+            saved_key_serializer_bytes = utils.int_to_bytes(key_serializer_code, 2)
 
             bucket_bytes = utils.create_initial_bucket_indexes(n_buckets, n_bytes_file)
 
@@ -330,10 +205,10 @@ class Booklet(MutableMapping):
             self._mm = mmap.mmap(self._file.fileno(), 0)
             self._data_pos = len(self._mm)
 
-            if save_value_serializer:
-                utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'01~._value_serializer', pickle.dumps(self._value_serializer, 5), self._n_bytes_key, self._n_bytes_value)
-            if save_key_serializer:
-                utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'02~._key_serializer', pickle.dumps(self._key_serializer, 5), self._n_bytes_key, self._n_bytes_value)
+            # if save_value_serializer:
+            #     utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'01~._value_serializer', pickle.dumps(self._value_serializer, 5), self._n_bytes_key, self._n_bytes_value)
+            # if save_key_serializer:
+            #     utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'02~._key_serializer', pickle.dumps(self._key_serializer, 5), self._n_bytes_key, self._n_bytes_value)
 
             self.sync()
 
@@ -372,25 +247,21 @@ class Booklet(MutableMapping):
 
     def keys(self):
         for key in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, False, self._n_bytes_key, self._n_bytes_value):
-            if key not in hidden_keys:
-                yield self._post_key(key)
+            yield self._post_key(key)
 
     def items(self):
         for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value):
-            if key not in hidden_keys:
-                yield self._post_key(key), self._post_value(value)
+            yield self._post_key(key), self._post_value(value)
 
     def values(self):
         for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value):
-            if key not in hidden_keys:
-                yield self._post_value(value)
+            yield self._post_value(value)
 
     def __iter__(self):
         return self.keys()
 
     def __len__(self):
-        keys_len = len(self.keys())
-        return keys_len - len(hidden_keys)
+        return len(self.keys())
 
     def __contains__(self, key):
         return key in self.keys()
