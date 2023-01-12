@@ -11,28 +11,34 @@ import pathlib
 import inspect
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Generic, Iterator, Union
+# import base64
 # from multiprocessing import shared_memory
 # from hashlib import blake2b
 
 # import utils
 from . import utils
 
-try:
-    import dill as pickle
-except:
-    pass
-
 imports = {}
+# try:
+#     import dill
+#     imports['dill'] = True
+# except:
+#     pass
 try:
     import orjson
     imports['orjson'] = True
 except:
     imports['orjson'] = False
-# try:
-#     import zstandard as zstd
-#     imports['zstd'] = True
-# except:
-#     imports['zstd'] = False
+try:
+    import zstandard as zstd
+    imports['zstd'] = True
+except:
+    imports['zstd'] = False
+try:
+    import numpy as np
+    imports['numpy'] = True
+except:
+    imports['numpy'] = False
 # try:
 #     import lz4
 #     imports['lz4'] = True
@@ -84,11 +90,30 @@ class Str:
         return obj.decode()
 
 
-# class Numpy:
-#     def dumps(obj: np.ndarray) -> bytes:
-#         return json.dumps(obj).tobytes()
-#     def loads(obj):
-#         return np.frombuffer(obj)
+class PickleZstd:
+    def dumps(obj):
+        return zstd.compress(pickle.dumps(obj, 5))
+    def loads(obj):
+        return pickle.loads(zstd.decompress(obj))
+
+
+class NumpyInt4:
+    def dumps(obj):
+        return obj.astype('i4').tobytes()
+    def loads(obj):
+        return np.frombuffer(obj, 'i4')
+
+class Uint4:
+    def dumps(obj):
+        return obj.to_bytes(4, 'little', signed=False)
+    def loads(obj):
+        return int.from_bytes(obj, 'little', signed=False)
+
+class Int4:
+    def dumps(obj):
+        return obj.to_bytes(4, 'little', signed=True)
+    def loads(obj):
+        return int.from_bytes(obj, 'little', signed=True)
 
 
 ## Compressors
@@ -117,6 +142,9 @@ class Str:
 #         return lz4.frame.compress(obj, self.compress_level)
 #     def decompress(self, obj):
 #         return lz4.frame.decompress(obj)
+
+
+serial_dict = {'pickle': Pickle, 'json': Json, 'orjson': Orjson, 'str': Str, 'pickle_zstd': PickleZstd, 'numpy_int4': NumpyInt4, 'uint4': Uint4, 'int4': Int4}
 
 
 #######################################################
@@ -205,29 +233,15 @@ class Booklet(MutableMapping):
             self._n_bytes_key = utils.bytes_to_int(base_param_bytes[19:20])
             self._n_bytes_value = utils.bytes_to_int(base_param_bytes[20:21])
             self._n_buckets = utils.bytes_to_int(base_param_bytes[21:24])
+            saved_value_serializer = utils.bytes_to_int(base_param_bytes[24:25])
+            saved_key_serializer = utils.bytes_to_int(base_param_bytes[25:26])
 
             data_index_pos = utils.get_data_index_pos(self._n_buckets, self._n_bytes_file)
             self._data_pos = utils.get_data_pos(self._mm, data_index_pos, self._n_bytes_file)
 
             ## Pull out the serializers
-            self._value_serializer = pickle.loads(utils.get_value(self._mm, b'01~._value_serializer', self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets))
-            self._key_serializer = pickle.loads(utils.get_value(self._mm, b'02~._key_serializer', self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets))
-
-        else:
-            ## Value Serializer
-            if value_serializer is None:
-                self._value_serializer = None
-            elif value_serializer == 'str':
-                self._value_serializer = Str
-            elif value_serializer == 'pickle':
-                self._value_serializer = Pickle
-            elif value_serializer == 'json':
-                self._value_serializer = Json
-            elif value_serializer == 'orjson':
-                if imports['orjson']:
-                    self._value_serializer = Orjson
-                else:
-                    raise ValueError('orjson could not be imported.')
+            if saved_value_serializer == 1:
+                self._value_serializer = pickle.loads(utils.get_value(self._mm, b'01~._value_serializer', self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets))
             elif inspect.isclass(value_serializer):
                 class_methods = dir(value_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
@@ -235,22 +249,10 @@ class Booklet(MutableMapping):
                 else:
                     raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
             else:
-                raise ValueError('value serializer must be one of None, str, pickle, json, orjson, or a serializer class with dumps and loads methods.')
+                raise ValueError('value serializer must be a serializer class with dumps and loads methods.')
 
-            ## Key Serializer
-            if key_serializer is None:
-                self._key_serializer = None
-            elif key_serializer == 'str':
-                self._key_serializer = Str
-            elif key_serializer == 'pickle':
-                self._key_serializer = Pickle
-            elif key_serializer == 'json':
-                self._key_serializer = Json
-            elif key_serializer == 'orjson':
-                if imports['orjson']:
-                    self._key_serializer = Orjson
-                else:
-                    raise ValueError('orjson could not be imported.')
+            if saved_key_serializer == 1:
+                self._key_serializer = pickle.loads(utils.get_value(self._mm, b'02~._key_serializer', self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets))
             elif inspect.isclass(key_serializer):
                 class_methods = dir(key_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
@@ -258,7 +260,42 @@ class Booklet(MutableMapping):
                 else:
                     raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
             else:
-                raise ValueError('serializer must be one of None, str, pickle, json, orjson, or a serializer class with dumps and loads methods.')
+                raise ValueError('serializer must be a serializer class with dumps and loads methods.')
+
+        else:
+            ## Value Serializer
+            if value_serializer is None:
+                self._value_serializer = None
+                save_value_serializer = True
+            elif isinstance(value_serializer, str):
+                self._value_serializer = serial_dict[value_serializer]
+                save_value_serializer = True
+            elif inspect.isclass(value_serializer):
+                class_methods = dir(value_serializer)
+                if ('dumps' in class_methods) and ('loads' in class_methods):
+                    self._value_serializer = value_serializer
+                    save_value_serializer = False
+                else:
+                    raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
+            else:
+                raise ValueError('value serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serial_dict.keys())))
+
+            ## Key Serializer
+            if key_serializer is None:
+                self._key_serializer = None
+                save_key_serializer = True
+            elif isinstance(key_serializer, str):
+                self._key_serializer = serial_dict[key_serializer]
+                save_key_serializer = True
+            elif inspect.isclass(key_serializer):
+                class_methods = dir(key_serializer)
+                if ('dumps' in class_methods) and ('loads' in class_methods):
+                    self._key_serializer = key_serializer
+                    save_key_serializer = False
+                else:
+                    raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
+            else:
+                raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serial_dict.keys())))
 
             ## Write uuid, version, and other parameters and save encodings to new file
             self._n_bytes_file = n_bytes_file
@@ -270,12 +307,21 @@ class Booklet(MutableMapping):
             n_bytes_key_bytes = utils.int_to_bytes(n_bytes_key, 1)
             n_bytes_value_bytes = utils.int_to_bytes(n_bytes_value, 1)
             n_buckets_bytes = utils.int_to_bytes(n_buckets, 3)
+            if save_value_serializer:
+                saved_value_serializer_bytes = utils.int_to_bytes(1, 1)
+            else:
+                saved_value_serializer_bytes = utils.int_to_bytes(0, 1)
+            if save_key_serializer:
+                saved_key_serializer_bytes = utils.int_to_bytes(1, 1)
+            else:
+                saved_key_serializer_bytes = utils.int_to_bytes(0, 1)
+
 
             bucket_bytes = utils.create_initial_bucket_indexes(n_buckets, n_bytes_file)
 
             self._file = io.open(file_path, 'w+b', buffering=write_buffer_size)
 
-            _ = self._file.write(uuid_arete + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + bucket_bytes)
+            _ = self._file.write(uuid_arete + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
             self._file.flush()
 
             self._write_buffer = mmap.mmap(-1, write_buffer_size)
@@ -284,8 +330,10 @@ class Booklet(MutableMapping):
             self._mm = mmap.mmap(self._file.fileno(), 0)
             self._data_pos = len(self._mm)
 
-            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'01~._value_serializer', pickle.dumps(self._value_serializer, 5), self._n_bytes_key, self._n_bytes_value)
-            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'02~._key_serializer', pickle.dumps(self._key_serializer, 5), self._n_bytes_key, self._n_bytes_value)
+            if save_value_serializer:
+                utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'01~._value_serializer', pickle.dumps(self._value_serializer, 5), self._n_bytes_key, self._n_bytes_value)
+            if save_key_serializer:
+                utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'02~._key_serializer', pickle.dumps(self._key_serializer, 5), self._n_bytes_key, self._n_bytes_value)
 
             self.sync()
 

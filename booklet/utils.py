@@ -16,7 +16,7 @@ from time import time
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
 # old_special_bytes = b'\xfe\xff\xff\xff\xff\xff\xff\xff\xff'
 
-sub_index_init_pos = 24
+sub_index_init_pos = 26
 key_hash_len = 13
 
 ############################################
@@ -217,6 +217,11 @@ def write_data_blocks(mm, write_buffer, write_buffer_size, buffer_index, data_po
 
     write_len = len(write_bytes)
 
+    wb_space = write_buffer_size - wb_pos
+    if write_len > wb_space:
+        file_len = flush_write_buffer(mm, write_buffer)
+        wb_pos = 0
+
     if write_len > write_buffer_size:
         file_len += write_len
         mm.resize(file_len)
@@ -224,11 +229,6 @@ def write_data_blocks(mm, write_buffer, write_buffer_size, buffer_index, data_po
         # mm.flush()
         wb_pos = 0
     else:
-        wb_space = write_buffer_size - wb_pos
-        if write_len > wb_space:
-            file_len = flush_write_buffer(mm, write_buffer)
-            wb_pos = 0
-
         new_n_bytes = write_buffer.write(write_bytes)
 
     if key_hash in buffer_index:
