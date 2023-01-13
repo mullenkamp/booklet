@@ -9,7 +9,7 @@ here = os.path.abspath(os.path.dirname(__file__))
 # General parameters
 name = 'booklet'
 main_package = 'booklet'
-version = '0.0.13'
+version = '0.0.14'
 descrip = 'A python key-value file database'
 
 # The below code is for readthedocs. To have sphinx/readthedocs interact with
