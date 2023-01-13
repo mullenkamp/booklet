@@ -21,8 +21,15 @@ I'll probably put it on conda-forge once I feel like it's up to an appropriate s
 
 Serialization
 -----------------------------
-Both the keys and values stored in Booklet must be bytes when written to disk. This is the default when "open" is called. Booklet allows for various serializers to be used for taking input keys and values and converting them to bytes. The in-build serializers include pickle, str, json, and orjson (if orjson is installed). If you want to serialize to json, then it is highly recommended to use orjson as it is substantially faster than the standard json python module. If the user has installed the dill python package, it will use this instead of pickle. The dill package will allow the serializers to be more independent from the original source of the serializer classes. Pickle will only reference classes and functions back to the source scripts rather than storing them directly.
-The user can also pass custom serializers to the key_serializer and value_serializer parameters. These must have "dumps" and "loads" static methods. This allows the user to chain a serializer and a compressor together if desired.
+Both the keys and values stored in Booklet must be bytes when written to disk. This is the default when "open" is called. Booklet allows for various serializers to be used for taking input keys and values and converting them to bytes. There are many in-built serializers. Check the booklet.available_serializers list for what's available. Some serializers require additional packages to be installed (e.g. orjson, zstd, etc). If you want to serialize to json, then it is highly recommended to use orjson as it is substantially faster than the standard json python module. If in-built serializers are assigned at initial file creation, then they will be saved on future reading and writing on the same file (i.e. they don't need to be passed after the first time).
+The user can also pass custom serializers to the key_serializer and value_serializer parameters. These must have "dumps" and "loads" static methods. This allows the user to chain a serializer and a compressor together if desired. Custom serializers must be passed for writing and reading as they are not stored in the booklet file.
+
+.. code:: python
+
+  import booklet
+
+  print(booklet.available_serializers)
+
 
 Usage
 -----
@@ -45,8 +52,9 @@ Read data using the context manager
   with booklet.open('test.blt', 'r') as db:
     test_data = db['test_key']
 
-Notice that you don't need to pass serializer parameters when reading. Booklet stores this info on the initial file creation.
+Notice that you don't need to pass serializer parameters when reading (and additional writing) when in-built serializers are used. Booklet stores this info on the initial file creation.
 
+In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and (optionally) locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() at the end of a series of writes to ensure the data has been fully written to disk.
 
 Write data without using the context manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -73,11 +81,6 @@ Read data without using the context manager
   test_data2 = db['2nd_test_key']
 
   db.close()
-
-
-Recommendations
-~~~~~~~~~~~~~~~
-In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and (optionally) locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() at the end of a series of writes to ensure the data has been fully written to disk. And as with other dbm style APIs, the db.close() must be run to close the file and release locks. MultiThreading is safe for multiple readers and writers, but only multiple readers are safe with MultiProcessing.
 
 
 Custom serializers
@@ -114,7 +117,7 @@ Here's another example with compression.
   with booklet.open('test.blt', 'n', value_serializer=OrjsonZstd, key_serializer='str') as db:
     db['big_test'] = list(range(1000000))
 
-  with booklet.open('test.blt', 'r') as db:
+  with booklet.open('test.blt', 'r', value_serializer=OrjsonZstd) as db:
     big_test_data = db['big_test']
 
 
@@ -144,4 +147,5 @@ I need to write a lot more tests for the functionality. I also need to figure ou
 
 Benchmarks
 -----------
-Coming soon...
+From my initial tests, the performance is comporable to other very fast key-value databases (e.g. gdbm, lmdb).
+Proper benchmarks will be coming soon...
