@@ -322,7 +322,8 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
 
 def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value):
     """
-    Doesn't seem to work. I'll need to come back to this...
+    The hash_block_len needs to be subtracted from the old data_block_rel_pos for all changed blocks...but this is hard...
+    In the current structure, this is not reasonably possible...I'd have to store the values in similar buckets to the keys to make this work.
     """
     data_index_pos = get_data_index_pos(n_buckets, n_bytes_file)
     data_pos = get_data_pos(mm, data_index_pos, n_bytes_file)
