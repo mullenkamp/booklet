@@ -141,7 +141,7 @@ The open flag follows the standard dbm options:
 
 
 TODO
-~~~~~
+-----
 I need to write a lot more tests for the functionality.
 
 I would like to have the ability to prune files (i.e. remove old stale data from the file to shorten the file length). Unfortunately, the current file structure makes it extremely difficult to perform. A future version might have a different structure to support this better, but at the moment this kind of functionality is very minor. If a pruned file is desired, you can simply iterate through all of the keys and values to create a new file.
