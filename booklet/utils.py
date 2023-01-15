@@ -16,7 +16,7 @@ from time import time
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
 # old_special_bytes = b'\xfe\xff\xff\xff\xff\xff\xff\xff\xff'
 
-sub_index_init_pos = 28
+sub_index_init_pos = 33
 key_hash_len = 13
 
 ############################################
@@ -174,7 +174,7 @@ def iter_keys_values(mm, n_buckets, n_bytes_file, data_pos, key=False, value=Fal
     bucket_init_pos = sub_index_init_pos + ((n_buckets + 1) * n_bytes_file)
     bucket_len = data_pos - bucket_init_pos
     hash_block_len = n_bytes_file + key_hash_len
-    n_hash_blocks = int(bucket_len / hash_block_len)
+    n_hash_blocks = bucket_len // hash_block_len
 
     key_hash_set = set()
 
@@ -257,7 +257,7 @@ def flush_write_buffer(mm, write_buffer):
         return file_len
 
 
-def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
+def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets, n_keys):
     """
 
     """
@@ -283,12 +283,12 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
 
     ## Write new indexes
     buckets_end_pos = data_pos
-    n_new_indexes = 0
+    new_indexes_len = 0
     new_bucket_indexes = {}
     for bucket in range(n_buckets):
         bucket_index_pos = get_bucket_index_pos(bucket, n_bytes_file)
         old_bucket_pos = get_bucket_pos(mm, bucket_index_pos, n_bytes_file)
-        new_bucket_pos = old_bucket_pos + n_new_indexes
+        new_bucket_pos = old_bucket_pos + new_indexes_len
         new_bucket_indexes[bucket] = new_bucket_pos
 
         if bucket in index1:
@@ -301,7 +301,7 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
             mm.seek(new_bucket_pos)
             mm.write(bucket_data)
 
-            n_new_indexes += bucket_data_len
+            new_indexes_len += bucket_data_len
             buckets_end_pos += bucket_data_len
 
     ## Update the bucket indexes
@@ -317,7 +317,9 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
     mm.write(new_bucket_index_bytes)
     # mm.flush()
 
-    return new_data_pos, {}
+    n_keys += n_new_indexes
+
+    return new_data_pos, {}, n_keys
 
 
 def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value):

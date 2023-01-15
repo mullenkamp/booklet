@@ -30,6 +30,7 @@ version_bytes = version.to_bytes(2, 'little', signed=False)
 
 # page_size = mmap.ALLOCATIONGRANULARITY
 
+n_keys_pos = 25
 
 #######################################################
 ### Classes
@@ -116,9 +117,10 @@ class Booklet(MutableMapping):
             self._n_bytes_file = utils.bytes_to_int(base_param_bytes[18:19])
             self._n_bytes_key = utils.bytes_to_int(base_param_bytes[19:20])
             self._n_bytes_value = utils.bytes_to_int(base_param_bytes[20:21])
-            self._n_buckets = utils.bytes_to_int(base_param_bytes[21:24])
-            saved_value_serializer = utils.bytes_to_int(base_param_bytes[24:26])
-            saved_key_serializer = utils.bytes_to_int(base_param_bytes[26:28])
+            self._n_buckets = utils.bytes_to_int(base_param_bytes[21:25])
+            self._n_keys = utils.bytes_to_int(base_param_bytes[n_keys_pos:29])
+            saved_value_serializer = utils.bytes_to_int(base_param_bytes[29:31])
+            saved_key_serializer = utils.bytes_to_int(base_param_bytes[31:33])
 
             data_index_pos = utils.get_data_index_pos(self._n_buckets, self._n_bytes_file)
             self._data_pos = utils.get_data_pos(self._mm, data_index_pos, self._n_bytes_file)
@@ -184,11 +186,13 @@ class Booklet(MutableMapping):
             self._n_bytes_key = n_bytes_key
             self._n_bytes_value = n_bytes_value
             self._n_buckets = n_buckets
+            self._n_keys = 0
 
             n_bytes_file_bytes = utils.int_to_bytes(n_bytes_file, 1)
             n_bytes_key_bytes = utils.int_to_bytes(n_bytes_key, 1)
             n_bytes_value_bytes = utils.int_to_bytes(n_bytes_value, 1)
-            n_buckets_bytes = utils.int_to_bytes(n_buckets, 3)
+            n_buckets_bytes = utils.int_to_bytes(n_buckets, 4)
+            n_keys_bytes = utils.int_to_bytes(self._n_keys, 4)
             saved_value_serializer_bytes = utils.int_to_bytes(value_serializer_code, 2)
             saved_key_serializer_bytes = utils.int_to_bytes(key_serializer_code, 2)
 
@@ -196,7 +200,7 @@ class Booklet(MutableMapping):
 
             self._file = io.open(file_path, 'w+b', buffering=write_buffer_size)
 
-            _ = self._file.write(uuid_arete + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
+            _ = self._file.write(uuid_arete + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
             self._file.flush()
 
             self._write_buffer = mmap.mmap(-1, write_buffer_size)
@@ -261,7 +265,7 @@ class Booklet(MutableMapping):
         return self.keys()
 
     def __len__(self):
-        return len(self.keys())
+        return self._n_keys
 
     def __contains__(self, key):
         return key in self.keys()
@@ -346,6 +350,7 @@ class Booklet(MutableMapping):
 
             key_hash = utils.hash_key(self._pre_key(key))
             self._buffer_index[key_hash] = 0
+            self._n_keys -= 1
         else:
             raise ValueError('File is open for read only.')
 
@@ -380,11 +385,13 @@ class Booklet(MutableMapping):
             if self._buffer_index:
                 utils.flush_write_buffer(self._mm, self._write_buffer)
                 self._sync_index()
+            self._mm.seek(n_keys_pos)
+            self._mm.write(utils.int_to_bytes(self._n_keys, 4))
             self._mm.flush()
             self._file.flush()
 
     def _sync_index(self):
-        self._data_pos, self._buffer_index = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets)
+        self._data_pos, self._buffer_index, self._n_keys = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets, self._n_keys)
 
 
 
