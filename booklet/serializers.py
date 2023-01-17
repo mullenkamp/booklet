@@ -135,61 +135,61 @@ class NumpyInt8Zstd:
 
 class Uint1:
     def dumps(obj):
-        return obj.to_bytes(1, 'little', signed=False)
+        return int(obj).to_bytes(1, 'little', signed=False)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=False)
 
 class Int1:
     def dumps(obj):
-        return obj.to_bytes(4, 'little', signed=True)
+        return int(obj).to_bytes(4, 'little', signed=True)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=True)
 
 class Uint2:
     def dumps(obj):
-        return obj.to_bytes(2, 'little', signed=False)
+        return int(obj).to_bytes(2, 'little', signed=False)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=False)
 
 class Int2:
     def dumps(obj):
-        return obj.to_bytes(2, 'little', signed=True)
+        return int(obj).to_bytes(2, 'little', signed=True)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=True)
 
 class Uint4:
     def dumps(obj):
-        return obj.to_bytes(4, 'little', signed=False)
+        return int(obj).to_bytes(4, 'little', signed=False)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=False)
 
 class Int4:
     def dumps(obj):
-        return obj.to_bytes(4, 'little', signed=True)
+        return int(obj).to_bytes(4, 'little', signed=True)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=True)
 
 class Uint5:
     def dumps(obj):
-        return obj.to_bytes(5, 'little', signed=False)
+        return int(obj).to_bytes(5, 'little', signed=False)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=False)
 
 class Int5:
     def dumps(obj):
-        return obj.to_bytes(5, 'little', signed=True)
+        return int(obj).to_bytes(5, 'little', signed=True)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=True)
 
 class Uint8:
     def dumps(obj):
-        return obj.to_bytes(8, 'little', signed=False)
+        return int(obj).to_bytes(8, 'little', signed=False)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=False)
 
 class Int8:
     def dumps(obj):
-        return obj.to_bytes(8, 'little', signed=True)
+        return int(obj).to_bytes(8, 'little', signed=True)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=True)
 
