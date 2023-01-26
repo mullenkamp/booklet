@@ -223,8 +223,7 @@ def write_data_blocks(mm, write_buffer, write_buffer_size, buffer_index, data_po
         wb_pos = 0
 
     if write_len > write_buffer_size:
-        file_len += write_len
-        mm.resize(file_len)
+        mm.resize(file_len + write_len)
         new_n_bytes = mm.write(write_bytes)
         # mm.flush()
         wb_pos = 0
@@ -244,10 +243,9 @@ def flush_write_buffer(mm, write_buffer):
     file_len = len(mm)
     wb_pos = write_buffer.tell()
     if wb_pos > 0:
-        wb_pos = write_buffer.tell()
-        write_buffer.seek(0)
         new_size = file_len + wb_pos
         mm.resize(new_size)
+        write_buffer.seek(0)
         _ = mm.write(write_buffer.read(wb_pos))
         write_buffer.seek(0)
         # mm.flush()

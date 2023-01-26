@@ -110,7 +110,7 @@ class Booklet(MutableMapping):
             ## Pull out base parameters
             base_param_bytes = self._mm.read(utils.sub_index_init_pos)
 
-            # TODO: Run uuid and version check at some point...
+            # TODO: Run uuid and version check
             sys_uuid = base_param_bytes[:16]
             version = utils.bytes_to_int(base_param_bytes[16:18])
 
@@ -198,7 +198,7 @@ class Booklet(MutableMapping):
 
             bucket_bytes = utils.create_initial_bucket_indexes(n_buckets, n_bytes_file)
 
-            self._file = io.open(file_path, 'w+b', buffering=write_buffer_size)
+            self._file = io.open(file_path, 'w+b')
 
             _ = self._file.write(uuid_arete + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
             self._file.flush()
