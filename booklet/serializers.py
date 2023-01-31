@@ -45,6 +45,11 @@ try:
     imports.add('shapely')
 except:
     pass
+try:
+    import msgpack
+    imports.add('msgpack')
+except:
+    pass
 # try:
 #     import lz4
 #     imports['lz4'] = True
@@ -233,12 +238,23 @@ class WkbZstd:
     def loads(obj):
         return shapely.wkb.loads(zstd.decompress(obj))
 
+class Msgpack:
+    def dumps(obj):
+        return msgpack.dumps(obj)
+    def loads(obj):
+        return msgpack.loads(obj)
+
+class MsgpackZstd:
+    def dumps(obj):
+        return zstd.compress(msgpack.dumps(obj), 1)
+    def loads(obj):
+        return msgpack.loads(zstd.decompress(obj))
 
 ##########################################
 ## Serializer dict
 ## New serializers must be appended to the end of the dict!!!!!
 
-serial_dict = {None: None, 'str': Str, 'pickle': Pickle, 'json': Json, 'orjson': Orjson, 'uint1': Uint1, 'int1': Int1, 'uint2': Uint2, 'int2': Int2, 'uint4': Uint4, 'int4': Int4, 'uint5': Uint5, 'int5': Int5, 'uint8': Uint8, 'int8': Int8, 'pickle_zstd': PickleZstd, 'orjson_zstd': OrjsonZstd, 'numpy_int1': NumpyInt1, 'numpy_int2': NumpyInt2, 'numpy_int4': NumpyInt4, 'numpy_int8': NumpyInt8, 'numpy_int2_zstd': NumpyInt2Zstd, 'numpy_int4_zstd': NumpyInt4Zstd, 'numpy_int8_zstd': NumpyInt8Zstd, 'pd_zstd': PdZstd, 'gpd_zstd': GpdZstd, 'zstd': Zstd, 'wkb': Wkb, 'wkb_zstd': WkbZstd}
+serial_dict = {None: None, 'str': Str, 'pickle': Pickle, 'json': Json, 'orjson': Orjson, 'uint1': Uint1, 'int1': Int1, 'uint2': Uint2, 'int2': Int2, 'uint4': Uint4, 'int4': Int4, 'uint5': Uint5, 'int5': Int5, 'uint8': Uint8, 'int8': Int8, 'pickle_zstd': PickleZstd, 'orjson_zstd': OrjsonZstd, 'numpy_int1': NumpyInt1, 'numpy_int2': NumpyInt2, 'numpy_int4': NumpyInt4, 'numpy_int8': NumpyInt8, 'numpy_int2_zstd': NumpyInt2Zstd, 'numpy_int4_zstd': NumpyInt4Zstd, 'numpy_int8_zstd': NumpyInt8Zstd, 'pd_zstd': PdZstd, 'gpd_zstd': GpdZstd, 'zstd': Zstd, 'wkb': Wkb, 'wkb_zstd': WkbZstd, 'msgpack': Msgpack, 'msgpack_zstd': MsgpackZstd}
 
 serial_name_dict = {n: i+1 for i, n in enumerate(serial_dict)}
 
