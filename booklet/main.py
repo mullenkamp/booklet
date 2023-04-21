@@ -19,7 +19,7 @@ from . import utils
 # import serializers
 from . import serializers
 
-uuid_arete = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
+uuid_blt = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 # special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
 version = 1
 version_bytes = version.to_bytes(2, 'little', signed=False)
@@ -200,7 +200,7 @@ class Booklet(MutableMapping):
 
             self._file = io.open(file_path, 'w+b')
 
-            _ = self._file.write(uuid_arete + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
+            _ = self._file.write(uuid_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
             self._file.flush()
 
             self._write_buffer = mmap.mmap(-1, write_buffer_size)

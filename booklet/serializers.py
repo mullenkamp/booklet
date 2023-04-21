@@ -50,6 +50,8 @@ try:
     imports.add('msgpack')
 except:
     pass
+
+
 # try:
 #     import lz4
 #     imports['lz4'] = True
@@ -249,6 +251,15 @@ class MsgpackZstd:
         return zstd.compress(msgpack.dumps(obj), 1)
     def loads(obj):
         return msgpack.loads(zstd.decompress(obj))
+
+class FileObj:
+    def dumps(obj):
+        if not isinstance(obj, (io.BufferedIOBase, io.RawIOBase)):
+            obj = io.BytesIO(obj)
+        return obj
+    def loads(obj):
+        return obj
+
 
 ##########################################
 ## Serializer dict
