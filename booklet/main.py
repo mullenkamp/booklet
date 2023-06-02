@@ -334,8 +334,13 @@ class Booklet(MutableMapping):
     #     return recovered_space
 
     def __getitem__(self, key):
+        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets)
 
-        return self.get(key)
+        if value is None:
+            raise KeyError(key)
+        else:
+            return self._post_value(value)
+
 
     def __setitem__(self, key, value):
         if self._write:
