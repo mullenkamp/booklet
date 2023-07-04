@@ -252,13 +252,13 @@ class MsgpackZstd:
     def loads(obj):
         return msgpack.loads(zstd.decompress(obj))
 
-class FileObj:
-    def dumps(obj):
-        if not isinstance(obj, (io.BufferedIOBase, io.RawIOBase)):
-            obj = io.BytesIO(obj)
-        return obj
-    def loads(obj):
-        return obj
+# class FileObj:
+#     def dumps(obj):
+#         if not isinstance(obj, (io.BufferedIOBase, io.RawIOBase)):
+#             obj = io.BytesIO(obj)
+#         return obj
+#     def loads(obj):
+#         return obj
 
 
 ##########################################
