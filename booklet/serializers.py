@@ -236,7 +236,7 @@ class Wkb:
 
 class WkbZstd:
     def dumps(obj):
-        return zstd.compress(shapely.wkb.dumps(obj))
+        return zstd.compress(shapely.wkb.dumps(obj), 1)
     def loads(obj):
         return shapely.wkb.loads(zstd.decompress(obj))
 
