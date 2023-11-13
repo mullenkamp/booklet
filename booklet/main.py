@@ -72,7 +72,7 @@ class Booklet(MutableMapping):
     """
 
     """
-    def __init__(self, file_path: str, flag: str = "r", value_serializer = None, key_serializer = None, write_buffer_size = 5000000, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10000):
+    def __init__(self, file_path: str, flag: str = "r", value_serializer = None, key_serializer = None, write_buffer_size = 5000000, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10007):
         """
 
         """
@@ -401,7 +401,7 @@ class Booklet(MutableMapping):
 
 
 def open(
-    file_path: str, flag: str = "r", write_buffer_size = 5000000, value_serializer = None, key_serializer = None, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10000):
+    file_path: str, flag: str = "r", write_buffer_size = 5000000, value_serializer = None, key_serializer = None, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10007):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any reads and new writes do not need to be opened with the encoding parameters. Currently, it uses pickle to serialize the serializers to the file.
 
