@@ -9,6 +9,14 @@ import pathlib
 import inspect
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Generic, Iterator, Union
+from threading import Lock
+
+try:
+    import fcntl
+    fcntl_import = True
+except ImportError:
+    fcntl_import = False
+
 # import base64
 # from multiprocessing import shared_memory
 # from hashlib import blake2b
@@ -34,38 +42,6 @@ n_keys_pos = 25
 
 #######################################################
 ### Classes
-
-# class _ClosedDict(MutableMapping):
-#     'Marker for a closed dict.  Access attempts raise a ValueError.'
-
-#     def closed(self, *args):
-#         raise ValueError('invalid operation on closed shelf')
-#     __iter__ = __len__ = __getitem__ = __setitem__ = __delitem__ = keys = closed
-
-#     def __repr__(self):
-#         return '<Closed Dictionary>'
-
-
-# file_path = '/media/nvme1/cache/arete/test.arete'
-# file_path = '/media/nvme1/git/nzrec/data/node.arete'
-# n_bytes_file = 4
-# n_bytes_key=1
-# n_bytes_value=4
-# n_buckets = 11
-# key = b'$\xd4\xb2o^\x15\xce*\x02\xa3\x1b'
-# write_buffer_size = 5000000
-# flag = 'n'
-# flag = 'r'
-# sync: bool = False
-# lock: bool = True
-# serializer = 'pickle'
-# protocol: int = 5
-# compressor = None
-# compress_level: int = 1
-# index_serializer = 'str'
-
-# key = b'00~._serializer'
-# value = pickle.dumps(Pickle(protocol), protocol)
 
 
 class Booklet(MutableMapping):
@@ -100,11 +76,19 @@ class Booklet(MutableMapping):
         if fp_exists:
             if write:
                 self._file = io.open(file_path, 'r+b')
+                if fcntl_import:
+                    fcntl.flock(self._file, fcntl.LOCK_EX)
+                else:
+                    self._lock = Lock()
+                    self._lock.acquire()
+
                 self._mm = mmap.mmap(self._file.fileno(), 0)
                 self._write_buffer = mmap.mmap(-1, write_buffer_size)
                 self._buffer_index = {}
             else:
                 self._file = io.open(file_path, 'rb')
+                if fcntl_import:
+                    fcntl.flock(self._file, fcntl.LOCK_SH)
                 self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
             ## Pull out base parameters
@@ -128,8 +112,8 @@ class Booklet(MutableMapping):
             ## Pull out the serializers
             if saved_value_serializer > 0:
                 self._value_serializer = serializers.serial_int_dict[saved_value_serializer]
-            elif value_serializer is None:
-                raise ValueError('value serializer must be a serializer class with dumps and loads methods.')
+            # elif value_serializer is None:
+            #     raise ValueError('value serializer must be a serializer class with dumps and loads methods.')
             elif inspect.isclass(value_serializer):
                 class_methods = dir(value_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
@@ -141,8 +125,8 @@ class Booklet(MutableMapping):
 
             if saved_key_serializer > 0:
                 self._key_serializer = serializers.serial_int_dict[saved_key_serializer]
-            elif key_serializer is None:
-                raise ValueError('key serializer must be a serializer class with dumps and loads methods.')
+            # elif key_serializer is None:
+            #     raise ValueError('key serializer must be a serializer class with dumps and loads methods.')
             elif inspect.isclass(key_serializer):
                 class_methods = dir(key_serializer)
                 if ('dumps' in class_methods) and ('loads' in class_methods):
@@ -199,6 +183,11 @@ class Booklet(MutableMapping):
             bucket_bytes = utils.create_initial_bucket_indexes(n_buckets, n_bytes_file)
 
             self._file = io.open(file_path, 'w+b')
+            if fcntl_import:
+                fcntl.flock(self._file, fcntl.LOCK_EX)
+            else:
+                self._lock = Lock()
+                self._lock.acquire()
 
             _ = self._file.write(uuid_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
             self._file.flush()
@@ -209,43 +198,34 @@ class Booklet(MutableMapping):
             self._mm = mmap.mmap(self._file.fileno(), 0)
             self._data_pos = len(self._mm)
 
-            # if save_value_serializer:
-            #     utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'01~._value_serializer', pickle.dumps(self._value_serializer, 5), self._n_bytes_key, self._n_bytes_value)
-            # if save_key_serializer:
-            #     utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, b'02~._key_serializer', pickle.dumps(self._key_serializer, 5), self._n_bytes_key, self._n_bytes_value)
-
             self.sync()
 
 
     def _pre_key(self, key) -> bytes:
 
         ## Serialize to bytes
-        if self._key_serializer is not None:
-            key = self._key_serializer.dumps(key)
+        key = self._key_serializer.dumps(key)
 
         return key
 
     def _post_key(self, key: bytes):
 
         ## Serialize from bytes
-        if self._key_serializer is not None:
-            key = self._key_serializer.loads(key)
+        key = self._key_serializer.loads(key)
 
         return key
 
     def _pre_value(self, value) -> bytes:
 
         ## Serialize to bytes
-        if self._value_serializer is not None:
-            value = self._value_serializer.dumps(value)
+        value = self._value_serializer.dumps(value)
 
         return value
 
     def _post_value(self, value: bytes):
 
         ## Serialize from bytes
-        if self._value_serializer is not None:
-            value = self._value_serializer.loads(value)
+        value = self._value_serializer.loads(value)
 
         return value
 
@@ -378,6 +358,12 @@ class Booklet(MutableMapping):
         self.sync()
         if self._write:
             self._write_buffer.close()
+            if fcntl_import:
+                fcntl.flock(self._file, fcntl.LOCK_UN)
+            else:
+                self._lock.release()
+        elif fcntl_import:
+            fcntl.flock(self._file, fcntl.LOCK_UN)
 
         self._mm.close()
         self._file.close()
@@ -403,7 +389,7 @@ class Booklet(MutableMapping):
 def open(
     file_path: str, flag: str = "r", write_buffer_size = 5000000, value_serializer = None, key_serializer = None, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10007):
     """
-    Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any reads and new writes do not need to be opened with the encoding parameters. Currently, it uses pickle to serialize the serializers to the file.
+    Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
     Parameters
     -----------
@@ -414,7 +400,7 @@ def open(
         Flag associated with how the file is opened according to the dbm style. See below for details.
 
     write_buffer_size : int
-        The buffer memory size used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
+        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
         This is only used when file is open for writing.
 
     value_serializer : str, class, or None
@@ -435,7 +421,7 @@ def open(
         The number of bytes to represent an integer of the max length of each value.
 
     n_buckets : int
-        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance.
+        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be at lowest ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance. Just keep the number of buckets at approximately the number of keys.
 
     Returns
     -------

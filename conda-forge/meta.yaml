@@ -1,4 +1,4 @@
-{% set name = "shelflet" %}
+{% set name = "booklet" %}
 {% set version = "0.1.0" %}
 
 package:
@@ -16,8 +16,7 @@ build:
 
 requirements:
   build:
-    - python >=3.8
-    - setuptools
+    - hatchling
   run:
     - python >=3.8
     - zstandard
@@ -31,8 +30,11 @@ test:
     - pip
 
 about:
-  home: https://github.com/mullenkamp/shelflet
-  summary: The Python shelve module except with compression to make smaller shelves!
+  home: https://github.com/mullenkamp/booklet
+  summary: A python key-value file database
+  description: A python key-value file database
+  doc_url: https://github.com/mullenkamp/booklet
+  dev_url: ''
   license: Apache-2.0
   license_file: LICENSE
 
