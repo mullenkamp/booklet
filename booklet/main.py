@@ -10,6 +10,7 @@ import inspect
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Generic, Iterator, Union
 from threading import Lock
+# from multiprocessing import Manager
 
 try:
     import fcntl
@@ -76,12 +77,17 @@ class Booklet(MutableMapping):
         if fp_exists:
             if write:
                 self._file = io.open(file_path, 'r+b')
+
+                ## Locks
                 if fcntl_import:
                     fcntl.flock(self._file, fcntl.LOCK_EX)
-                else:
-                    self._lock = Lock()
-                    self._lock.acquire()
+                # else:
+                #     self._manager = Manager()
+                #     self._lock = self._manager.Lock()
+                #     self._lock.acquire()
+                self._thread_lock = Lock()
 
+                ## Write buffers
                 self._mm = mmap.mmap(self._file.fileno(), 0)
                 self._write_buffer = mmap.mmap(-1, write_buffer_size)
                 self._buffer_index = {}
@@ -183,11 +189,11 @@ class Booklet(MutableMapping):
             bucket_bytes = utils.create_initial_bucket_indexes(n_buckets, n_bytes_file)
 
             self._file = io.open(file_path, 'w+b')
+
+            ## Locks
             if fcntl_import:
                 fcntl.flock(self._file, fcntl.LOCK_EX)
-            else:
-                self._lock = Lock()
-                self._lock.acquire()
+            self._thread_lock = Lock()
 
             _ = self._file.write(uuid_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
             self._file.flush()
@@ -324,7 +330,10 @@ class Booklet(MutableMapping):
 
     def __setitem__(self, key, value):
         if self._write:
+            self._thread_lock.acquire()
             utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
+            self._thread_lock.release()
+
         else:
             raise ValueError('File is open for read only.')
 
@@ -360,8 +369,6 @@ class Booklet(MutableMapping):
             self._write_buffer.close()
             if fcntl_import:
                 fcntl.flock(self._file, fcntl.LOCK_UN)
-            else:
-                self._lock.release()
         elif fcntl_import:
             fcntl.flock(self._file, fcntl.LOCK_UN)
 
