@@ -49,7 +49,7 @@ class Booklet(MutableMapping):
     """
 
     """
-    def __init__(self, file_path: str, flag: str = "r", value_serializer = None, key_serializer = None, write_buffer_size = 5000000, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10007):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", write_buffer_size: int = 5000000, value_serializer: str = None, key_serializer: str = None, n_bytes_file: int=4, n_bytes_key: int=1, n_bytes_value: int=4, n_buckets:int =10007):
         """
 
         """
@@ -195,16 +195,17 @@ class Booklet(MutableMapping):
                 fcntl.flock(self._file, fcntl.LOCK_EX)
             self._thread_lock = Lock()
 
-            _ = self._file.write(uuid_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
-            self._file.flush()
-
-            self._write_buffer = mmap.mmap(-1, write_buffer_size)
-            self._buffer_index = {}
-
-            self._mm = mmap.mmap(self._file.fileno(), 0)
-            self._data_pos = len(self._mm)
-
-            self.sync()
+            with self._thread_lock:
+                _ = self._file.write(uuid_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
+                self._file.flush()
+    
+                self._write_buffer = mmap.mmap(-1, write_buffer_size)
+                self._buffer_index = {}
+    
+                self._mm = mmap.mmap(self._file.fileno(), 0)
+                self._data_pos = len(self._mm)
+    
+                self.sync()
 
 
     def _pre_key(self, key) -> bytes:
@@ -269,10 +270,11 @@ class Booklet(MutableMapping):
 
         """
         if self._write:
-            for key, value in key_value_dict.items():
-                self[key] = value
-
-            self.sync()
+            with self._thread_lock:
+                for key, value in key_value_dict.items():
+                    utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
+    
+                self.sync()
         else:
             raise ValueError('File is open for read only.')
 
@@ -330,9 +332,8 @@ class Booklet(MutableMapping):
 
     def __setitem__(self, key, value):
         if self._write:
-            self._thread_lock.acquire()
-            utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
-            self._thread_lock.release()
+            with self._thread_lock:
+                utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
 
         else:
             raise ValueError('File is open for read only.')
@@ -343,8 +344,9 @@ class Booklet(MutableMapping):
                 raise KeyError(key)
 
             key_hash = utils.hash_key(self._pre_key(key))
-            self._buffer_index[key_hash] = 0
-            self._n_keys -= 1
+            with self._thread_lock:
+                self._buffer_index[key_hash] = 0
+                self._n_keys -= 1
         else:
             raise ValueError('File is open for read only.')
 
@@ -356,10 +358,11 @@ class Booklet(MutableMapping):
 
     def clear(self):
         if self._write:
-            for key in self.keys():
-                key_hash = utils.hash_key(key)
-                self._buffer_index[key_hash] = 0
-            self.sync()
+            with self._thread_lock:
+                for key in self.keys():
+                    key_hash = utils.hash_key(key)
+                    self._buffer_index[key_hash] = 0
+                self.sync()
         else:
             raise ValueError('File is open for read only.')
 
@@ -380,13 +383,14 @@ class Booklet(MutableMapping):
 
     def sync(self):
         if self._write:
-            if self._buffer_index:
-                utils.flush_write_buffer(self._mm, self._write_buffer)
-                self._sync_index()
-            self._mm.seek(n_keys_pos)
-            self._mm.write(utils.int_to_bytes(self._n_keys, 4))
-            self._mm.flush()
-            self._file.flush()
+            with self._thread_lock:
+                if self._buffer_index:
+                    utils.flush_write_buffer(self._mm, self._write_buffer)
+                    self._sync_index()
+                self._mm.seek(n_keys_pos)
+                self._mm.write(utils.int_to_bytes(self._n_keys, 4))
+                self._mm.flush()
+                self._file.flush()
 
     def _sync_index(self):
         self._data_pos, self._buffer_index, self._n_keys = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets, self._n_keys)
@@ -394,7 +398,7 @@ class Booklet(MutableMapping):
 
 
 def open(
-    file_path: str, flag: str = "r", write_buffer_size = 5000000, value_serializer = None, key_serializer = None, n_bytes_file=4, n_bytes_key=1, n_bytes_value=4, n_buckets=10007):
+    file_path: Union[str, pathlib.Path], flag: str = "r", write_buffer_size: int = 5000000, value_serializer: str = None, key_serializer: str = None, n_bytes_file: int=4, n_bytes_key: int=1, n_bytes_value: int=4, n_buckets:int =10007):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
