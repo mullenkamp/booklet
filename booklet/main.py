@@ -10,7 +10,7 @@ import inspect
 from collections.abc import Mapping, MutableMapping
 from typing import Any, Generic, Iterator, Union
 from threading import Lock
-# from multiprocessing import Manager
+from multiprocessing import Manager
 
 try:
     import fcntl
@@ -49,7 +49,7 @@ class Booklet(MutableMapping):
     """
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", write_buffer_size: int = 5000000, value_serializer: str = None, key_serializer: str = None, n_bytes_file: int=4, n_bytes_key: int=1, n_bytes_value: int=4, n_buckets:int =10007):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000, n_bytes_file: int=4, n_bytes_key: int=1, n_bytes_value: int=4, n_buckets:int =10007):
         """
 
         """
@@ -91,6 +91,7 @@ class Booklet(MutableMapping):
                 self._mm = mmap.mmap(self._file.fileno(), 0)
                 self._write_buffer = mmap.mmap(-1, write_buffer_size)
                 self._buffer_index = {}
+                self._data_block_rel_pos_delete_bytes = utils.int_to_bytes(0, n_bytes_file)
             else:
                 self._file = io.open(file_path, 'rb')
                 if fcntl_import:
@@ -177,6 +178,7 @@ class Booklet(MutableMapping):
             self._n_bytes_value = n_bytes_value
             self._n_buckets = n_buckets
             self._n_keys = 0
+            self._data_block_rel_pos_delete_bytes = utils.int_to_bytes(0, n_bytes_file)
 
             n_bytes_file_bytes = utils.int_to_bytes(n_bytes_file, 1)
             n_bytes_key_bytes = utils.int_to_bytes(n_bytes_key, 1)
@@ -205,7 +207,7 @@ class Booklet(MutableMapping):
                 self._mm = mmap.mmap(self._file.fileno(), 0)
                 self._data_pos = len(self._mm)
     
-                self.sync()
+            # self.sync()
 
 
     def _pre_key(self, key) -> bytes:
@@ -274,7 +276,6 @@ class Booklet(MutableMapping):
                 for key, value in key_value_dict.items():
                     utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
     
-                self.sync()
         else:
             raise ValueError('File is open for read only.')
 
@@ -343,9 +344,9 @@ class Booklet(MutableMapping):
             if key not in self:
                 raise KeyError(key)
 
-            key_hash = utils.hash_key(self._pre_key(key))
+            delete_key_hash = utils.hash_key(self._pre_key(key))
             with self._thread_lock:
-                self._buffer_index[key_hash] = 0
+                utils.assign_delete_flag(self._mm, delete_key_hash, self._data_pos, self._n_bytes_file, self._n_buckets, self._data_block_rel_pos_delete_bytes, self._n_bytes_key, self._n_bytes_value)
                 self._n_keys -= 1
         else:
             raise ValueError('File is open for read only.')
@@ -360,9 +361,10 @@ class Booklet(MutableMapping):
         if self._write:
             with self._thread_lock:
                 for key in self.keys():
-                    key_hash = utils.hash_key(key)
-                    self._buffer_index[key_hash] = 0
-                self.sync()
+                    delete_key_hash = utils.hash_key(self._pre_key(key))
+                    utils.assign_delete_flag(self._mm, delete_key_hash, self._data_pos, self._n_bytes_file, self._n_buckets, self._data_block_rel_pos_delete_bytes, self._n_bytes_key, self._n_bytes_value)
+                    self._n_keys -= 1
+            self.sync()
         else:
             raise ValueError('File is open for read only.')
 
@@ -398,7 +400,7 @@ class Booklet(MutableMapping):
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", write_buffer_size: int = 5000000, value_serializer: str = None, key_serializer: str = None, n_bytes_file: int=4, n_bytes_key: int=1, n_bytes_value: int=4, n_buckets:int =10007):
+    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000, n_bytes_file: int=4, n_bytes_key: int=1, n_bytes_value: int=4, n_buckets:int =10007):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -458,4 +460,4 @@ def open(
 
     """
 
-    return Booklet(file_path, flag, value_serializer, key_serializer, write_buffer_size, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets)
+    return Booklet(file_path, flag, key_serializer, value_serializer, write_buffer_size, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets)
