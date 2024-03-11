@@ -3,8 +3,8 @@ Booklet
 
 Introduction
 ------------
-Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. The API uses the MutableMapping class which is the same python dictionary methods python programmers are used to in addition to the typical dbm methods (e.g. sync and prune).
-It is thread-safe (using thread locks on writes), but only multiprocessing safe for linux users (using flock for locking files on open for writes).
+Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. Booklet uses the MutableMapping class API which is the same as python's dictionary in addition to the typical dbm methods (e.g. sync and prune).
+It is thread-safe (using thread locks on writes), but only multiprocessing-safe for linux users (using flock for locking files on open for writes).
 
 Installation
 ------------
