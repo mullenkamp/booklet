@@ -272,17 +272,17 @@ def flush_write_buffer(mm, write_buffer):
         return file_len
 
 
-def assign_delete_flag(mm, delete_key_hash, data_pos, n_bytes_file, n_buckets, data_block_rel_pos_delete_bytes, n_bytes_key, n_bytes_value):
-    """
+# def assign_delete_flag(mm, delete_key_hash, data_pos, n_bytes_file, n_buckets, data_block_rel_pos_delete_bytes, n_bytes_key, n_bytes_value):
+#     """
 
-    """
-    index_bucket = get_index_bucket(delete_key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
-    bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
-    key_hash_pos = get_key_hash_pos(mm, delete_key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
+#     """
+#     index_bucket = get_index_bucket(delete_key_hash, n_buckets)
+#     bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
+#     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
+#     key_hash_pos = get_key_hash_pos(mm, delete_key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
 
-    mm.seek(key_hash_pos + key_hash_len)
-    mm.write(data_block_rel_pos_delete_bytes)
+#     mm.seek(key_hash_pos + key_hash_len)
+#     mm.write(data_block_rel_pos_delete_bytes)
 
 
 

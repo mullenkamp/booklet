@@ -7,7 +7,7 @@ Created on Sun Mar 10 13:55:17 2024
 """
 import pytest
 import io
-from booklet import Booklet
+from booklet import Booklet, __version__
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 
@@ -28,6 +28,8 @@ def set_item(f, key, value):
 
 ##############################################
 ### Tests
+
+print(__version__)
 
 tf = NamedTemporaryFile()
 file_path = tf.name
