@@ -146,6 +146,23 @@ def test_prune():
             assert source_value == value
 
 
+def test_set_items_get_items():
+    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+        for key, value in data_dict.items():
+            f[key] = value
+
+    with Booklet(file_path, 'w') as f:
+        f[50] = [0, 0]
+        value = f[11]
+
+    with Booklet(file_path) as f:
+        value = f[50]
+        assert value == [0, 0]
+
+        value = f[11]
+        assert value == list(range(11))
+
+
 
 ## Always make this last!!!
 def test_clear():
