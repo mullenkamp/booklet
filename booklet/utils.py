@@ -5,16 +5,13 @@ Created on Thu Jan  5 11:04:13 2023
 
 @author: mike
 """
-import os
-import io
+# import os
+# import io
 from hashlib import blake2b, blake2s
-from time import time
+# from time import time
 
 ############################################
 ### Parameters
-
-# special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
-# old_special_bytes = b'\xfe\xff\xff\xff\xff\xff\xff\xff\xff'
 
 sub_index_init_pos = 33
 key_hash_len = 13
@@ -379,334 +376,99 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets, n_keys):
     mm.write(new_bucket_index_bytes)
     # mm.flush()
 
-    n_keys += n_new_indexes
-
-    return new_data_pos, {}, n_keys
-
-
-# def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value):
-#     """
-#     The hash_block_len needs to be subtracted from the old data_block_rel_pos for all changed blocks...but this is hard...
-#     In the current structure, this is not reasonably possible...I'd have to store the values in similar buckets to the keys to make this work.
-#     """
-#     data_index_pos = get_data_index_pos(n_buckets, n_bytes_file)
-#     data_pos = get_data_pos(mm, data_index_pos, n_bytes_file)
-
-#     ## Get bucket positions
-#     bucket_poss = {}
-#     for b in range(n_buckets):
-#         bucket_index_pos = get_bucket_index_pos(b, n_bytes_file)
-#         bucket_pos = get_bucket_pos(mm, bucket_index_pos, n_bytes_file)
-#         bucket_poss[b] = bucket_pos
-
-#     bucket_poss[n_buckets] = data_pos
-
-#     old_file_len = len(mm)
-
-#     del_dict = {b: [] for b in range(n_buckets)}
-
-#     # file_len_reduce = 0
-#     new_file_len = old_file_len
-
-#     hash_block_len = n_bytes_file + key_hash_len
-
-#     ## Iterate through the bucket indexes and move data blocks
-#     for b in range(n_buckets):
-#         bucket_pos = bucket_poss[b]
-#         next_bucket_pos = bucket_poss[b+1]
-#         n_hash_blocks = int((next_bucket_pos - bucket_pos)/hash_block_len)
-
-#         key_hash_set = set()
-
-#         read_bytes = 0
-#         for hb in range(n_hash_blocks):
-#             read_pos = bucket_pos + read_bytes
-#             mm.seek(read_pos)
-#             hash_block = mm.read(hash_block_len)
-
-#             key_hash = hash_block[:key_hash_len]
-#             data_block_rel_pos = bytes_to_int(hash_block[key_hash_len:])
-
-#             if data_block_rel_pos == 0:
-#                 key_hash_set.add(key_hash)
-#                 # print('trigger 0')
-#                 continue
-
-#             if key_hash in key_hash_set:
-#                 # print('trigger delete')
-#                 del_dict[b].append(read_pos)
-
-#                 ## Move data block
-#                 data_block_pos = data_pos + data_block_rel_pos - 1
-#                 mm.seek(data_block_pos)
-#                 key_len_value_len = mm.read(n_bytes_key + n_bytes_value)
-#                 key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
-#                 value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
-
-#                 data_block_len = n_bytes_key + n_bytes_value + key_len + value_len
-#                 end_data_block_pos = data_block_pos + data_block_len
-#                 end_file_len = new_file_len - end_data_block_pos
-
-#                 mm.move(data_block_pos, end_data_block_pos, end_file_len)
-#                 new_file_len = new_file_len - data_block_len
-#             else:
-#                 key_hash_set.add(key_hash)
-
-#             read_bytes += hash_block_len
-
-#     ## Prune the indexes
-#     for b, del_list in del_dict.items():
-#         if del_list:
-#             for bucket_index_pos in del_list:
-#                 # print('trigger del index')
-#                 end_bucket_index_pos = bucket_index_pos + hash_block_len
-#                 end_file_len = new_file_len - end_bucket_index_pos
-
-#                 mm.move(bucket_index_pos, end_bucket_index_pos, end_file_len)
-#                 new_file_len = new_file_len - hash_block_len
-
-#                 for i in range(b+1, n_buckets+1):
-#                     # print(i)
-#                     bucket_poss[i] -= hash_block_len
-
-#     ## Save the new bucket indexes
-#     bucket_indexes_bytes = bytearray()
-#     for b, index in bucket_poss.items():
-#         bucket_indexes_bytes += int_to_bytes(index, n_bytes_file)
-
-#     mm.seek(sub_index_init_pos)
-#     mm.write(bucket_indexes_bytes)
-#     # print(len(bucket_indexes_bytes))
-#     # print(bucket_poss[n_buckets])
-
-#     ## Resize the entire file
-#     mm.resize(new_file_len)
-
-#     ## Flush
-#     mm.flush()
-
-#     ## new data position
-#     data_pos = get_data_pos(mm, data_index_pos, n_bytes_file)
-
-#     return data_pos, old_file_len - new_file_len
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# def write_chunk(file, index, key, value):
-#     """
-
-#     """
-#     # key_len_bytes = len(key).to_bytes(1, 'little', signed=False)
-#     # value_len_bytes = len(value).to_bytes(8, 'little', signed=False)
-
-#     # write_bytes = memoryview(special_bytes + key_len_bytes + key + value_len_bytes + value)
-
-#     # new_n_bytes = len(write_bytes)
-#     # old_len = len(mm)
-
-#     # mm.resize(old_len + new_n_bytes)
-
-#     file.seek(0, 2)
-#     pos = file.tell()
-
-#     new_n_bytes = file.write(value)
-
-#     # reassign_old_key(mm, key, old_len)
-
-#     if key in index:
-#         # old_index = list(index.pop(key))
-#         # old_index.insert(0, key)
-#         pos, len1 = index.pop(key)
-
-#         index['00~._stale'].update({pos: len1})
-
-#     index[key] = (pos, new_n_bytes)
-
-
-
-# def write_many_chunks(file, index, key_value_dict):
-#     """
-
-#     """
-#     file.seek(0, 2)
-#     pos = file.tell()
-
-#     write_bytes = bytearray()
-#     for key, value in key_value_dict.items():
-#         value_len_bytes = len(value)
-
-#         if key in index:
-#             pos0, len0 = index.pop(key)
-#             index['00~._stale'].update({pos0: len0})
-
-#         index[key] = (pos, value_len_bytes)
-#         pos += value_len_bytes
-
-#         write_bytes += value
-
-#     new_n_bytes = file.write(write_bytes)
-
-#     return new_n_bytes
-
-
-
-
-
-# def serialize_index(index):
-#     """
-
-#     """
-#     index_bytes = bytearray()
-#     for h, pos in index.items():
-#         index_bytes += h + pos.to_bytes(8, 'little', signed=False)
-
-#     return index_bytes
-
-
-# def deserialize_index(index_path, read_buffer_size):
-#     """
-
-#     """
-#     # start = time()
-#     base_index = {}
-#     file_len = os.stat(index_path).st_size
-#     with io.open(index_path, 'rb') as file:
-#         with io.BufferedReader(file, buffer_size=read_buffer_size) as mm:
-#             n_chunks = (file_len//read_buffer_size)
-#             read_len_list = [read_buffer_size] * (file_len//read_buffer_size)
-#             read_len_list.append(file_len - (n_chunks * read_buffer_size))
-#             for i in read_len_list:
-#                 # print(i)
-#                 key_chunk = mm.read(i)
-#                 base_index.update({key_chunk[i:i+11]: int.from_bytes(key_chunk[i+11:i+19], 'little', signed=False) for i in range(0, len(key_chunk), 19)})
-#     # end = time()
-#     # print(end - start)
-
-#     return base_index
-
-
-
-
-
-# def find_key_pos(mm, key, start_pos=19, end_pos=None):
-#     """
-
-#     """
-#     # key_len = len(key)
-#     # key_len_bytes = key_len.to_bytes(1, 'little', signed=False)
-#     # key_chunk = memoryview(special_bytes + key_len_bytes + key)
-
-#     with io.open(index_path, 'rb') as file:
-#         with io.BufferedReader(file, buffer_size=read_buffer_size) as buf:
-#             with mmap(buf.fileno(), 0, access=ACCESS_READ) as mm:
-#                 if end_pos is None:
-#                     end_pos = len(mm)
-
-#                 mm.seek(19)
-#                 print(mm.read(11))
-
-#                 key_pos = mm.find(key, start_pos, end_pos)
-#                 if key_pos == -1:
-#                     raise KeyError(key)
-#                 while key_pos % 19 > 0:
-#                     key_pos = mm.find(key, key_pos, end_pos)
-
-#     return key_pos
-
-
-
-# def reassign_old_key(mm, key, last_pos):
-#     """
-
-#     """
-#     old_pos = find_chunk_pos(mm, key, last_pos)
-
-#     if old_pos > -1:
-#         mm.seek(old_pos)
-#         _ = mm.write(old_special_bytes)
-
-
-# def get_keys_values(mm, keys=False, values=False):
-#     """
-
-#     """
-#     mm_len = len(mm)
-#     mm.seek(18)
-
-#     while mm.tell() < mm_len:
-#         sp = mm.read(9)
-#         key_len = int.from_bytes(mm.read(1), 'little')
-
-#         if sp == special_bytes:
-#             key = mm.read(key_len)
-#             value_len = int.from_bytes(mm.read(8), 'little')
-#             if keys and values:
-#                 value = mm.read(value_len)
-#                 yield key, value
-#             elif keys:
-#                 mm.seek(value_len, 1)
-#                 yield key
-#             elif values:
-#                 value = mm.read(value_len)
-#                 yield value
-#             else:
-#                 raise ValueError('keys and/or values must be True.')
-#         else:
-#             mm.seek(key_len, 1)
-#             value_len = int.from_bytes(mm.read(8), 'little')
-#             mm.seek(value_len, 1)
-
-
-# def get_value(mm, key):
-#     """
-
-#     """
-#     pos = find_chunk_pos(mm, key)
-
-#     if pos > -1:
-#         key_len = len(key)
-#         mm.seek(pos+10+key_len)
-#         value_len = int.from_bytes(mm.read(8), 'little')
-
-#         value = mm.read(value_len)
-
-#         return value
-#     else:
-#         return None
-
-
-
-
-# def test_scan():
-#     with io.open(index_path, 'rb') as file:
-#         with io.BufferedReader(file, buffer_size=read_buffer_size) as buf:
-#             with mmap(buf.fileno(), 0, access=ACCESS_READ) as mm:
-#                 end_pos = len(mm)
-
-#                 key_pos = mm.find(key, start_pos, end_pos)
-#                 while key_pos % 19 > 0:
-#                     key_pos = mm.find(key, key_pos, end_pos)
-#     return key_pos
-
-
-
-
-
-
+    return new_data_pos
+
+
+def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value):
+    """
+
+    """
+    data_index_pos = get_data_index_pos(n_buckets, n_bytes_file)
+    data_pos = get_data_pos(mm, data_index_pos, n_bytes_file)
+    bucket_block_len = key_hash_len + n_bytes_file
+    hash_buckets_pos = data_index_pos + n_bytes_file
+    hash_bucket_len = data_pos - hash_buckets_pos
+
+    ## Iterate over the bucket indexes
+    n_bucket_blocks = int(hash_bucket_len/bucket_block_len)
+
+    mm.seek(hash_buckets_pos)
+    hash_bucket_bytes = mm.read(hash_bucket_len)
+
+    data_rel_pos_list = []
+    hash_key_list = []
+    delete_set = set()
+    start_pos = 0
+    for i in range(n_bucket_blocks):
+        # print(i)
+        data_rel_pos_index = start_pos+key_hash_len
+        key_hash = hash_bucket_bytes[start_pos:data_rel_pos_index]
+        start_pos = data_rel_pos_index+n_bytes_file
+        data_rel_pos = bytes_to_int(hash_bucket_bytes[data_rel_pos_index:start_pos])
+        hash_key_list.append(key_hash)
+        data_rel_pos_list.append(data_rel_pos)
+
+        if data_rel_pos == 0:
+            delete_set.add(i)
+
+    ## Remove data blocks associated with the deleted keys
+    recovered_space = 0
+    for pos in delete_set:
+        key_hash = hash_key_list[pos]
+
+        hash_key_positions = []
+        append = hash_key_positions.append
+        while True:
+            try:
+               pos = hash_key_list[pos+1:].index(key_hash) + pos+1
+               append(pos)
+            except ValueError:
+                break
+
+        for data_index_pos in hash_key_positions:
+            data_rel_pos = data_rel_pos_list[data_index_pos]
+
+            if data_rel_pos > 0:
+                data_block_pos = data_pos + data_rel_pos - 1
+    
+                mm.seek(data_block_pos)
+                key_len_value_len = mm.read(n_bytes_key + n_bytes_value)
+                key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
+                value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
+            
+                old_end_file_len = len(mm)
+                data_block_len = n_bytes_key + n_bytes_value + key_len + value_len
+                end_data_block_pos = data_block_pos + data_block_len
+                bytes_left_count = old_end_file_len - end_data_block_pos
+            
+                mm.move(data_block_pos, end_data_block_pos, bytes_left_count)
+            
+                new_end_file_len = old_end_file_len - data_block_len
+                mm.resize(new_end_file_len)
+    
+                for i, pos in enumerate(data_rel_pos_list):
+                    if pos > data_rel_pos:
+                        data_rel_pos_list[i] = pos - data_block_len
+    
+                data_rel_pos_list[data_index_pos] = 0
+                recovered_space += data_block_len
+
+    ## Save relative data positions back to file at hash buckets
+    key_hash_data_rel_bytes = bytearray()
+    for key_hash, data_rel_pos in zip(hash_key_list, data_rel_pos_list):
+        if data_rel_pos < 0:
+            data_rel_pos = 0
+        data_rel_pos_bytes = int_to_bytes(data_rel_pos, n_bytes_file)
+        key_hash_data_rel_bytes += key_hash + data_rel_pos_bytes
+
+    mm.seek(hash_buckets_pos)
+    mm.write(key_hash_data_rel_bytes)
+    mm.flush()
+
+    ## Update the hash bucket index by removing delete flags
+    # TODO: Need to do this at some point...
+
+    return data_pos, recovered_space
 
 
 

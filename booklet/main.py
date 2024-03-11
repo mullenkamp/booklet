@@ -29,13 +29,8 @@ from . import utils
 from . import serializers
 
 uuid_blt = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
-# special_bytes = b'\xff\xff\xff\xff\xff\xff\xff\xff\xff'
 version = 1
 version_bytes = version.to_bytes(2, 'little', signed=False)
-
-# lock_bytes = (-1).to_bytes(1, 'little', signed=True)
-# unlock_bytes = (0).to_bytes(1, 'little', signed=True)
-# stale_key_bytes = (0).to_bytes(8, 'little', signed=True)
 
 # page_size = mmap.ALLOCATIONGRANULARITY
 
@@ -275,52 +270,24 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 for key, value in key_value_dict.items():
                     utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
+                    self._n_keys += 1
     
         else:
             raise ValueError('File is open for read only.')
 
-    # def _write_many_chunks(self, key_value_dict):
-    #     """
 
-    #     """
-    #     self._file.seek(0, 2)
-    #     file_pos = self._file.tell()
+    def prune(self):
+        """
+        Prunes the old keys and associated values. Returns the recovered space in bytes.
+        """
+        if self._write:
+            with self._thread_lock:
+                self._data_pos, recovered_space = utils.prune_file(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value)
+        else:
+            raise ValueError('File is open for read only.')
 
-    #     write_bytes = bytearray()
-    #     for key, value in key_value_dict.items():
-    #         value = self._pre_value(value)
-    #         value_len_bytes = len(value)
+        return recovered_space
 
-    #         key_len_bytes = len(key)
-    #         key_hash = blake2b(key, digest_size=11).digest()
-
-    #         if key_hash in self._buffer_index:
-    #             _ = self._buffer_index.pop(key_hash)
-
-    #         # if key in self.index:
-    #         #     pos0 = self.index.pop(key)
-    #         #     self.index['00~._stale'].append(pos0)
-
-    #         self._buffer_index[key_hash] = file_pos
-    #         file_pos += 1 + key_len_bytes + 4 + value_len_bytes
-
-    #         write_bytes += key_len_bytes.to_bytes(1, 'little', signed=False) + key + value_len_bytes.to_bytes(4, 'little', signed=False) + value
-
-    #     new_n_bytes = self._file.write(write_bytes)
-
-    #     return new_n_bytes
-
-
-    # def prune(self):
-    #     """
-    #     Prunes the old keys and associated values. Returns the recovered space in bytes.
-    #     """
-    #     if self._write:
-    #         self._data_pos, recovered_space = utils.prune_file(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value)
-    #     else:
-    #         raise ValueError('File is open for read only.')
-
-    #     return recovered_space
 
     def __getitem__(self, key):
         value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets)
@@ -335,9 +302,11 @@ class Booklet(MutableMapping):
         if self._write:
             with self._thread_lock:
                 utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
+                self._n_keys += 1
 
         else:
             raise ValueError('File is open for read only.')
+
 
     def __delitem__(self, key):
         if self._write:
@@ -346,7 +315,7 @@ class Booklet(MutableMapping):
 
             delete_key_hash = utils.hash_key(self._pre_key(key))
             with self._thread_lock:
-                utils.assign_delete_flag(self._mm, delete_key_hash, self._data_pos, self._n_bytes_file, self._n_buckets, self._data_block_rel_pos_delete_bytes, self._n_bytes_key, self._n_bytes_value)
+                self._buffer_index[delete_key_hash] = 0
                 self._n_keys -= 1
         else:
             raise ValueError('File is open for read only.')
@@ -362,7 +331,7 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 for key in self.keys():
                     delete_key_hash = utils.hash_key(self._pre_key(key))
-                    utils.assign_delete_flag(self._mm, delete_key_hash, self._data_pos, self._n_bytes_file, self._n_buckets, self._data_block_rel_pos_delete_bytes, self._n_bytes_key, self._n_bytes_value)
+                    self._buffer_index[delete_key_hash] = 0
                     self._n_keys -= 1
             self.sync()
         else:
@@ -395,7 +364,8 @@ class Booklet(MutableMapping):
                 self._file.flush()
 
     def _sync_index(self):
-        self._data_pos, self._buffer_index, self._n_keys = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets, self._n_keys)
+        self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets, self._n_keys)
+        self._buffer_index = {}
 
 
 
