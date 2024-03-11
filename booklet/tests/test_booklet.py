@@ -36,7 +36,7 @@ data_dict = {key: list(range(key)) for key in range(2, 30)}
 
 
 def test_set_items():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='msgpack') as f:
+    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
         for key, value in data_dict.items():
             f[key] = value
 
@@ -47,7 +47,7 @@ def test_set_items():
 
 
 def test_update():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='msgpack') as f:
+    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
         f.update(data_dict)
 
     with Booklet(file_path) as f:
@@ -57,7 +57,7 @@ def test_update():
 
 
 def test_threading_writes():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='msgpack') as f:
+    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for key, value in data_dict.items():

@@ -24,6 +24,32 @@ classifiers = [
 ]
 dependencies = []
 
+[tool.hatch.envs.default]
+# type = "container"
+# image = 'python:3.9-slim-bullseye'
+python = "3.10"
+dependencies = [
+  "spyder-kernels==2.4",
+  "matplotlib",
+  "coverage[toml]>=6.5",
+  "pytest",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "coverage run -m pytest {args:tests}"
+cov-report = [
+  "- coverage combine",
+  "coverage report",
+]
+cov = [
+  "test-cov",
+  "cov-report",
+]
+
+[[tool.hatch.envs.all.matrix]]
+python = ["3.9", "3.10", "3.11"]
+
 [project.urls]
 Homepage = "https://github.com/mullenkamp/booklet"
 
