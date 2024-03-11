@@ -42,6 +42,60 @@ n_keys_pos = 25
 
 class Booklet(MutableMapping):
     """
+    Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag (unless a custom serializer is passed).
+
+    Parameters
+    -----------
+    file_path : str or pathlib.Path
+        It must be a path to a local file location. If you want to use a tempfile, then use the name from the NamedTemporaryFile initialized class.
+
+    flag : str
+        Flag associated with how the file is opened according to the dbm style. See below for details.
+
+    write_buffer_size : int
+        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
+        This is only used when the file is open for writing.
+
+    key_serializer : str, class, or None
+        The serializer to use to convert the input value to bytes. Run the booklet.available_serializers to determine the internal serializers that are available. None will require bytes as input. A custom serializer class can also be used. If the objects can be serialized to json, then use orjson or msgpack. They are super fast and you won't have the pickle issues.
+        If a custom class is passed, then it must have dumps and loads methods.
+
+    value_serializer : str, class, or None
+        Similar to the key_serializer, except for the values.
+
+    n_bytes_file : int
+        The number of bytes to represent an integer of the max size of the file. For example, the default of 4 can allow for a file size of ~4.3 GB. A value of 5 can allow for a file size of 1.1 TB. You shouldn't need a bigger value than 5...
+
+    n_bytes_key : int
+        The number of bytes to represent an integer of the max length of each key.
+
+    n_bytes_value : int
+        The number of bytes to represent an integer of the max length of each value.
+
+    n_buckets : int
+        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be at least ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance. Just keep the number of buckets at approximately the number of keys you expect to have.
+
+    Returns
+    -------
+    Booklet
+
+    The optional *flag* argument can be:
+
+    +---------+-------------------------------------------+
+    | Value   | Meaning                                   |
+    +=========+===========================================+
+    | ``'r'`` | Open existing database for reading only   |
+    |         | (default)                                 |
+    +---------+-------------------------------------------+
+    | ``'w'`` | Open existing database for reading and    |
+    |         | writing                                   |
+    +---------+-------------------------------------------+
+    | ``'c'`` | Open database for reading and writing,    |
+    |         | creating it if it doesn't exist           |
+    +---------+-------------------------------------------+
+    | ``'n'`` | Always create a new, empty database, open |
+    |         | for reading and writing                   |
+    +---------+-------------------------------------------+
 
     """
     def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000, n_bytes_file: int=4, n_bytes_key: int=1, n_bytes_value: int=4, n_buckets:int =10007):
@@ -201,8 +255,6 @@ class Booklet(MutableMapping):
     
                 self._mm = mmap.mmap(self._file.fileno(), 0)
                 self._data_pos = len(self._mm)
-    
-            # self.sync()
 
 
     def _pre_key(self, key) -> bytes:
@@ -372,27 +424,26 @@ class Booklet(MutableMapping):
 def open(
     file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000, n_bytes_file: int=4, n_bytes_key: int=1, n_bytes_value: int=4, n_buckets:int =10007):
     """
-    Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
+    Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag (unless a custom serializer is passed).
 
     Parameters
     -----------
     file_path : str or pathlib.Path
-        It must be a path to a local file location.
+        It must be a path to a local file location. If you want to use a tempfile, then use the name from the NamedTemporaryFile initialized class.
 
     flag : str
         Flag associated with how the file is opened according to the dbm style. See below for details.
 
     write_buffer_size : int
         The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
-        This is only used when file is open for writing.
-
-    value_serializer : str, class, or None
-        The serializer to use to convert the input value to bytes. Currently, must be one of pickle, json, orjson, None, or a custom serialize class. If the objects can be serialized to json, then use orjson. It's super fast and you won't have the pickle issues.
-        If None, then the input values must be bytes.
-        If a custom class is passed, then it must have dumps and loads methods.
+        This is only used when the file is open for writing.
 
     key_serializer : str, class, or None
-        Similar to the value_serializer, except for the keys.
+        The serializer to use to convert the input value to bytes. Run the booklet.available_serializers to determine the internal serializers that are available. None will require bytes as input. A custom serializer class can also be used. If the objects can be serialized to json, then use orjson or msgpack. They are super fast and you won't have the pickle issues.
+        If a custom class is passed, then it must have dumps and loads methods.
+
+    value_serializer : str, class, or None
+        Similar to the key_serializer, except for the values.
 
     n_bytes_file : int
         The number of bytes to represent an integer of the max size of the file. For example, the default of 4 can allow for a file size of ~4.3 GB. A value of 5 can allow for a file size of 1.1 TB. You shouldn't need a bigger value than 5...
@@ -404,7 +455,7 @@ def open(
         The number of bytes to represent an integer of the max length of each value.
 
     n_buckets : int
-        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be at lowest ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance. Just keep the number of buckets at approximately the number of keys.
+        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be at least ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance. Just keep the number of buckets at approximately the number of keys you expect to have.
 
     Returns
     -------

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "booklet"
-version = '0.1.8'
+dynamic = ["version"]
 description = "A python key-value file database"
 readme = "README.rst"
 license = "Apache-2.0"
@@ -57,4 +57,7 @@ Homepage = "https://github.com/mullenkamp/booklet"
 include = [
     "/booklet",
 ]
+
+[tool.hatch.version]
+path = "booklet/__init__.py"
 
