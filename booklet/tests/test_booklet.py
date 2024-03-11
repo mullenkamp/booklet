@@ -153,14 +153,14 @@ def test_set_items_get_items():
 
     with Booklet(file_path, 'w') as f:
         f[50] = [0, 0]
-        value = f[10]
+        value = f[11]
 
     with Booklet(file_path) as f:
         value = f[50]
         assert value == [0, 0]
 
-        value = f[10]
-        assert value == list(range(10))
+        value = f[11]
+        assert value == list(range(11))
 
 
 
