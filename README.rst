@@ -3,7 +3,8 @@ Booklet
 
 Introduction
 ------------
-Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. The API is designed to use all of the same python dictionary methods python programmers are used to in addition to the typical dbm methods.
+Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. The API uses the MutableMapping class which is the same python dictionary methods python programmers are used to in addition to the typical dbm methods (e.g. sync and prune).
+It is thread-safe (using thread locks on writes), but only multiprocessing safe for linux users (using flock for locking files on open for writes).
 
 Installation
 ------------
@@ -54,7 +55,7 @@ Read data using the context manager
 
 Notice that you don't need to pass serializer parameters when reading (and additional writing) when in-built serializers are used. Booklet stores this info on the initial file creation.
 
-In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and (optionally) locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() at the end of a series of writes to ensure the data has been fully written to disk.
+In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() (or db.close()) at the end of a series of writes to ensure the data has been fully written to disk.
 
 Write data without using the context manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -67,15 +68,15 @@ Write data without using the context manager
   db['test_key'] = ['one', 2, 'three', 4]
   db['2nd_test_key'] = ['five', 6, 'seven', 8]
 
-  db.sync()
-  db.close()
+  db.sync()  # Normally not necessary if the user closes the file after writing
+  db.close() # Will also run sync as part of the closing process
 
 
 Read data without using the context manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. code:: python
 
-  db = booklet.open('test.blt', 'r')
+  db = booklet.open('test.blt', 'r') # 'r' is the default opening method
 
   test_data1 = db['test_key']
   test_data2 = db['2nd_test_key']
@@ -120,6 +121,8 @@ Here's another example with compression.
   with booklet.open('test.blt', 'r', value_serializer=OrjsonZstd) as db:
     big_test_data = db['big_test']
 
+If you use a custom serializer, then you'll always need to pass it to booklet.open for additional reading and writing.
+
 
 The open flag follows the standard dbm options:
 
@@ -142,9 +145,7 @@ The open flag follows the standard dbm options:
 
 TODO
 -----
-I need to write a lot more tests for the functionality.
-
-I would like to have the ability to prune files (i.e. remove old stale data from the file to shorten the file length). Unfortunately, the current file structure makes it extremely difficult to perform. A future version might have a different structure to support this better, but at the moment this kind of functionality is very minor. If a pruned file is desired, you can simply iterate through all of the keys and values to create a new file.
+Starting in version 0.1.8, there is a prune method. It removes "deleted" keys and values from the file, but it currently leaves the old indeces in the hash table. The old indeces should generally not cause a performance issue (and definitely not a file size issue), but it would be nice to have these removed as part of the prune method one day.
 
 
 Benchmarks
