@@ -55,7 +55,7 @@ Read data using the context manager
 
 Notice that you don't need to pass serializer parameters when reading (and additional writing) when in-built serializers are used. Booklet stores this info on the initial file creation.
 
-In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() (or db.close()) at the end of a series of writes to ensure the data has been fully written to disk.
+In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() (or db.close()) at the end of a series of writes to ensure the data has been fully written to disk. Only after the writes have been synced can additional reads occur.
 
 Write data without using the context manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -76,7 +76,7 @@ Read data without using the context manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 .. code:: python
 
-  db = booklet.open('test.blt', 'r') # 'r' is the default opening method
+  db = booklet.open('test.blt') # 'r' is the default flag
 
   test_data1 = db['test_key']
   test_data2 = db['2nd_test_key']

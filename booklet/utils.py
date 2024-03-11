@@ -257,7 +257,8 @@ def flush_write_buffer(mm, write_buffer):
     """
 
     """
-    file_len = len(mm)
+    mm.seek(0, 2)
+    file_len = mm.tell()
     wb_pos = write_buffer.tell()
     if wb_pos > 0:
         new_size = file_len + wb_pos
