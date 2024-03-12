@@ -102,6 +102,8 @@ class Booklet(MutableMapping):
         """
 
         """
+        fp = pathlib.Path(file_path)
+
         if flag == "r":  # Open existing database for reading only (default)
             write = False
             fp_exists = True
@@ -109,7 +111,6 @@ class Booklet(MutableMapping):
             write = True
             fp_exists = True
         elif flag == "c":  # Open database for reading and writing, creating it if it doesn't exist
-            fp = pathlib.Path(file_path)
             fp_exists = fp.exists()
             write = True
         elif flag == "n":  # Always create a new, empty database, open for reading and writing
@@ -121,6 +122,7 @@ class Booklet(MutableMapping):
         self._write = write
         self._write_buffer_size = write_buffer_size
         self._write_buffer_pos = 0
+        self._file_path = fp
 
         ## Load or assign encodings and attributes
         if fp_exists:
@@ -249,10 +251,10 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 _ = self._file.write(uuid_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
                 self._file.flush()
-    
+
                 self._write_buffer = mmap.mmap(-1, write_buffer_size)
                 self._buffer_index = {}
-    
+
                 self._mm = mmap.mmap(self._file.fileno(), 0)
                 self._data_pos = len(self._mm)
 
@@ -323,7 +325,7 @@ class Booklet(MutableMapping):
                 for key, value in key_value_dict.items():
                     utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
                     self._n_keys += 1
-    
+
         else:
             raise ValueError('File is open for read only.')
 
@@ -403,6 +405,8 @@ class Booklet(MutableMapping):
 
     # def __del__(self):
     #     self.close()
+    #     self._file_path.unlink()
+
 
     def sync(self):
         if self._write:
