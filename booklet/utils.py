@@ -169,6 +169,36 @@ def get_data_block(mm, data_block_pos, key=False, value=False, n_bytes_key=1, n_
         raise ValueError('One or both key and value must be True.')
 
 
+def contains_key(mm, key, n_bytes_file, n_buckets):
+    """
+    Determine if a key is present in the file.
+    """
+    key_hash = hash_key(key)
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
+    bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
+
+    bucket_block_len = key_hash_len + n_bytes_file
+
+    key_hash_pos = mm.find(key_hash, bucket_pos1, bucket_pos2)
+
+    if key_hash_pos == -1:
+        return False
+
+    while (key_hash_pos - bucket_pos1) % bucket_block_len > 0:
+        key_hash_pos = mm.find(key_hash, key_hash_pos, bucket_pos2)
+        if key_hash_pos == -1:
+            return False
+
+    mm.seek(key_hash_pos + key_hash_len)
+    data_block_rel_pos = bytes_to_int(mm.read(n_bytes_file))
+
+    if data_block_rel_pos == 0:
+        return False
+
+    return True
+
+
 def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets):
     """
     Combines everything necessary to return a value.

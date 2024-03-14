@@ -4,7 +4,7 @@ Booklet
 Introduction
 ------------
 Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. Booklet uses the `MutableMapping <https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes>`_ class API which is the same as python's dictionary in addition to some `dbm <https://docs.python.org/3/library/dbm.html>`_ methods (i.e. sync and prune).
-It is thread-safe (using thread locks on writes), but only multiprocessing-safe for linux users (using flock for locking files on open for writes).
+It is thread-safe (using thread locks on writes) and multiprocessing-safe (using file locks).
 
 Deletes do not remove data from the file directly. Similarly, reassigning a value to an existing key adds a new key/value set to the file. During normal usage, the user will not notice a difference when requesting a key/value set, but the file size will grow. If size becomes an issue because of lots of deletes or reassignments, then the user should run the "prune" method to remove old key/value sets.
 
@@ -57,7 +57,7 @@ Read data using the context manager
 
 Notice that you don't need to pass serializer parameters when reading (and additional writing) when in-built serializers are used. Booklet stores this info on the initial file creation.
 
-In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() (or db.close()) at the end of a series of writes to ensure the data has been fully written to disk. Only after the writes have been synced can additional reads occur.
+In most cases, the user should use python's context manager "with" when reading and writing data. This will ensure data is properly written and locks are released on the file. If the context manager is not used, then the user must be sure to run the db.sync() (or db.close()) at the end of a series of writes to ensure the data has been fully written to disk. Only after the writes have been synced can additional reads occur. Make sure you close your file or you'll run into file deadlocks!
 
 Write data without using the context manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

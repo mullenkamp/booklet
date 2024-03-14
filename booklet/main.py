@@ -7,20 +7,18 @@ import io
 import mmap
 import pathlib
 import inspect
-from collections.abc import Mapping, MutableMapping
+from collections.abc import MutableMapping
 from typing import Any, Generic, Iterator, Union
 from threading import Lock
-from multiprocessing import Manager
+# from multiprocessing import Manager, shared_memory
+import portalocker
 
-try:
-    import fcntl
-    fcntl_import = True
-except ImportError:
-    fcntl_import = False
+# try:
+#     import fcntl
+#     fcntl_import = True
+# except ImportError:
+#     fcntl_import = False
 
-# import base64
-# from multiprocessing import shared_memory
-# from hashlib import blake2b
 
 # import utils
 from . import utils
@@ -130,12 +128,9 @@ class Booklet(MutableMapping):
                 self._file = io.open(file_path, 'r+b')
 
                 ## Locks
-                if fcntl_import:
-                    fcntl.flock(self._file, fcntl.LOCK_EX)
-                # else:
-                #     self._manager = Manager()
-                #     self._lock = self._manager.Lock()
-                #     self._lock.acquire()
+                # if fcntl_import:
+                #     fcntl.flock(self._file, fcntl.LOCK_EX)
+                portalocker.lock(self._file, portalocker.LOCK_EX)
                 self._thread_lock = Lock()
 
                 ## Write buffers
@@ -145,8 +140,9 @@ class Booklet(MutableMapping):
                 self._data_block_rel_pos_delete_bytes = utils.int_to_bytes(0, n_bytes_file)
             else:
                 self._file = io.open(file_path, 'rb')
-                if fcntl_import:
-                    fcntl.flock(self._file, fcntl.LOCK_SH)
+                # if fcntl_import:
+                #     fcntl.flock(self._file, fcntl.LOCK_SH)
+                portalocker.lock(self._file, portalocker.LOCK_SH)
                 self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
             ## Pull out base parameters
@@ -244,8 +240,9 @@ class Booklet(MutableMapping):
             self._file = io.open(file_path, 'w+b')
 
             ## Locks
-            if fcntl_import:
-                fcntl.flock(self._file, fcntl.LOCK_EX)
+            # if fcntl_import:
+            #     fcntl.flock(self._file, fcntl.LOCK_EX)
+            portalocker.lock(self._file, portalocker.LOCK_EX)
             self._thread_lock = Lock()
 
             with self._thread_lock:
@@ -306,7 +303,7 @@ class Booklet(MutableMapping):
         return self._n_keys
 
     def __contains__(self, key):
-        return key in self.keys()
+        return utils.contains_key(self._mm, self._pre_key(key), self._n_bytes_file, self._n_buckets)
 
     def get(self, key, default=None):
         value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets)
@@ -395,10 +392,9 @@ class Booklet(MutableMapping):
         self.sync()
         if self._write:
             self._write_buffer.close()
-            if fcntl_import:
-                fcntl.flock(self._file, fcntl.LOCK_UN)
-        elif fcntl_import:
-            fcntl.flock(self._file, fcntl.LOCK_UN)
+        # if fcntl_import:
+        #     fcntl.flock(self._file, fcntl.LOCK_UN)
+        portalocker.lock(self._file, portalocker.LOCK_UN)
 
         self._mm.close()
         self._file.close()
