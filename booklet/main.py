@@ -519,7 +519,7 @@ class FixedValue(EmptyBooklet):
         if self._write:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
+                    n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos, self._file)
                     self._n_keys += n_new_keys
 
         else:
@@ -551,7 +551,7 @@ class FixedValue(EmptyBooklet):
     def __setitem__(self, key, value):
         if self._write:
             with self._thread_lock:
-                n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
+                n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos, self._file)
                 self._n_keys += n_new_keys
 
         else:
