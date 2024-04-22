@@ -122,7 +122,7 @@ def test_delete_len():
             f.sync()
 
             new_len = len(f)
-    
+
             try:
                 _ = f[index]
                 raise ValueError()
@@ -364,7 +364,8 @@ def test_clear_fixed():
 #             value = f[key]
 
 
-
+# if not f._mm.closed:
+#     print('oops')
 
 
 
