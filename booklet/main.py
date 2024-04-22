@@ -11,6 +11,8 @@ from collections.abc import MutableMapping
 from typing import Any, Generic, Iterator, Union
 from threading import Lock
 import portalocker
+from itertools import count
+from collections import Counter, defaultdict, deque
 # from multiprocessing import Manager, shared_memory
 
 # try:
@@ -144,7 +146,10 @@ class EmptyBooklet(MutableMapping):
         return self.keys()
 
     def __len__(self):
-        return self._n_keys
+        counter = count()
+        deque(zip(self.keys(), counter), maxlen=0)
+
+        return next(counter)
 
     def __contains__(self, key):
         bytes_key = self._pre_key(key)
@@ -167,7 +172,7 @@ class EmptyBooklet(MutableMapping):
             with self._thread_lock:
                 for key, value in key_value_dict.items():
                     utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
-                    self._n_keys += 1
+                    # self._n_keys += 1
 
         else:
             raise ValueError('File is open for read only.')
@@ -199,7 +204,7 @@ class EmptyBooklet(MutableMapping):
         if self._write:
             with self._thread_lock:
                 utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
-                self._n_keys += 1
+                # self._n_keys += 1
 
         else:
             raise ValueError('File is open for read only.')
@@ -213,7 +218,7 @@ class EmptyBooklet(MutableMapping):
             delete_key_hash = utils.hash_key(self._pre_key(key))
             with self._thread_lock:
                 self._buffer_index[delete_key_hash] = 0
-                self._n_keys -= 1
+                # self._n_keys -= 1
         else:
             raise ValueError('File is open for read only.')
 
@@ -229,7 +234,7 @@ class EmptyBooklet(MutableMapping):
                 for key in self.keys():
                     delete_key_hash = utils.hash_key(self._pre_key(key))
                     self._buffer_index[delete_key_hash] = 0
-                    self._n_keys -= 1
+                    # self._n_keys -= 1
             self.sync()
         else:
             raise ValueError('File is open for read only.')
@@ -554,6 +559,9 @@ class FixedValue(EmptyBooklet):
         else:
             return self._post_value(value)
 
+    def __len__(self):
+        return self._n_keys
+
     def update(self, key_value_dict):
         """
 
@@ -561,8 +569,8 @@ class FixedValue(EmptyBooklet):
         if self._write:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
-                    self._n_keys += 1
+                    n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
+                    self._n_keys += n_new_keys
 
         else:
             raise ValueError('File is open for read only.')
@@ -593,12 +601,36 @@ class FixedValue(EmptyBooklet):
     def __setitem__(self, key, value):
         if self._write:
             with self._thread_lock:
-                utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
-                self._n_keys += 1
+                n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
+                self._n_keys += n_new_keys
 
         else:
             raise ValueError('File is open for read only.')
 
+
+    def __delitem__(self, key):
+        if self._write:
+            if key not in self:
+                raise KeyError(key)
+
+            delete_key_hash = utils.hash_key(self._pre_key(key))
+            with self._thread_lock:
+                self._buffer_index[delete_key_hash] = 0
+                self._n_keys -= 1
+        else:
+            raise ValueError('File is open for read only.')
+
+
+    def clear(self):
+        if self._write:
+            with self._thread_lock:
+                for key in self.keys():
+                    delete_key_hash = utils.hash_key(self._pre_key(key))
+                    self._buffer_index[delete_key_hash] = 0
+                    self._n_keys -= 1
+            self.sync()
+        else:
+            raise ValueError('File is open for read only.')
 
 
 

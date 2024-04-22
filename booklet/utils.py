@@ -486,7 +486,7 @@ def init_existing_variable_booklet(self, base_param_bytes, key_serializer, value
     self._n_bytes_key = bytes_to_int(base_param_bytes[19:20])
     self._n_bytes_value = bytes_to_int(base_param_bytes[20:21])
     self._n_buckets = bytes_to_int(base_param_bytes[21:n_keys_pos])
-    self._n_keys = bytes_to_int(base_param_bytes[n_keys_pos:29])
+    # self._n_keys = bytes_to_int(base_param_bytes[n_keys_pos:29])
     saved_value_serializer = bytes_to_int(base_param_bytes[29:31])
     saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
 
@@ -806,6 +806,8 @@ def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, d
         key_len = bytes_to_int(key_len_value_len)
         mm.seek(key_len, 1)
         _ = mm.write(value)
+
+        n_new_keys = 0
     else:
         wb_pos = write_buffer.tell()
         mm.seek(0, 2)
@@ -833,6 +835,10 @@ def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, d
             _ = buffer_index.pop(key_hash)
     
         buffer_index[key_hash] = file_len + wb_pos - data_pos + 1
+
+        n_new_keys = 1
+
+    return n_new_keys
 
 
 def prune_file_fixed(mm, n_buckets, n_bytes_file, n_bytes_key, value_len, sub_index_init_pos):
