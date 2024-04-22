@@ -38,6 +38,34 @@ uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 version = 1
 version_bytes = version.to_bytes(2, 'little', signed=False)
 
+
+############################################
+### Exception classes
+
+class BaseError(Exception):
+    def __init__(self, message, file=None, *args):
+        self.message = message # without this you may get DeprecationWarning
+        # Special attribute you desire with your Error, 
+        # perhaps the value that caused the error?:
+        if file is not None:
+            portalocker.lock(file, portalocker.LOCK_UN)
+        # allow users initialize misc. arguments as any other builtin Error
+        super(BaseError, self).__init__(message, *args)
+
+
+class ValueError(BaseError):
+    pass
+
+class TypeError(BaseError):
+    pass
+
+class KeyError(BaseError):
+    pass
+
+class SerializeError(BaseError):
+    pass
+
+
 ############################################
 ### Functions
 
@@ -125,7 +153,7 @@ def get_data_pos(mm, data_index_pos, n_bytes_file):
     return data_pos
 
 
-def get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file):
+def get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file, file):
     """
 
     """
@@ -134,17 +162,17 @@ def get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file):
     key_hash_pos = mm.find(key_hash, bucket_pos1, bucket_pos2)
 
     if key_hash_pos == -1:
-        raise KeyError('key does not exist')
+        raise KeyError('key does not exist', file)
 
     while (key_hash_pos - bucket_pos1) % bucket_block_len > 0:
         key_hash_pos = mm.find(key_hash, key_hash_pos, bucket_pos2)
         if key_hash_pos == -1:
-            raise KeyError('key does not exist')
+            raise KeyError('key does not exist', file)
 
     return key_hash_pos
 
 
-def get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file):
+def get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file, file):
     """
     The data block relative position of 0 is a delete/ignore flag, so all data block relative positions have been shifted forward by 1.
     """
@@ -152,7 +180,7 @@ def get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file):
     data_block_rel_pos = bytes_to_int(mm.read(n_bytes_file))
 
     if data_block_rel_pos == 0:
-        raise KeyError('key does not exist')
+        raise KeyError('key does not exist', file)
 
     data_block_pos = data_pos + data_block_rel_pos - 1
 
@@ -221,7 +249,7 @@ def contains_key(mm, key_hash, n_bytes_file, n_buckets, sub_index_init_pos):
     return True
 
 
-def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets, sub_index_init_pos):
+def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets, sub_index_init_pos, file):
     """
     Combines everything necessary to return a value.
     """
@@ -229,8 +257,8 @@ def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buc
     index_bucket = get_index_bucket(key_hash, n_buckets)
     bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
-    key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
-    data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file)
+    key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file, file)
+    data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file, file)
     value = get_data_block(mm, data_block_pos, key=False, value=True, n_bytes_key=n_bytes_key, n_bytes_value=n_bytes_value)
 
     return value
@@ -429,7 +457,7 @@ def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, sub_inde
             try:
                pos = hash_key_list[pos+1:].index(key_hash) + pos+1
                append(pos)
-            except ValueError:
+            except:
                 break
 
         for data_index_pos in hash_key_positions:
@@ -503,9 +531,9 @@ def init_existing_variable_booklet(self, base_param_bytes, key_serializer, value
         if ('dumps' in class_methods) and ('loads' in class_methods):
             self._value_serializer = value_serializer
         else:
-            raise ValueError('If a custom class is passed for a serializer, then it must have dumps and loads methods.')
+            raise ValueError('If a custom class is passed for a serializer, then it must have dumps and loads methods.', self._file)
     else:
-        raise ValueError('How did you mess up value_serializer so bad?!')
+        raise ValueError('How did you mess up value_serializer so bad?!', self._file)
 
     if saved_key_serializer > 0:
         self._key_serializer = serializers.serial_int_dict[saved_key_serializer]
@@ -516,9 +544,9 @@ def init_existing_variable_booklet(self, base_param_bytes, key_serializer, value
         if ('dumps' in class_methods) and ('loads' in class_methods):
             self._key_serializer = key_serializer
         else:
-            raise ValueError('If a custom class is passed for a serializer, then it must have dumps and loads methods.')
+            raise ValueError('If a custom class is passed for a serializer, then it must have dumps and loads methods.', self._file)
     else:
-        raise ValueError('How did you mess up key_serializer so bad?!')
+        raise ValueError('How did you mess up key_serializer so bad?!', self._file)
 
 
 def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets, file_path, write_buffer_size):
@@ -535,9 +563,9 @@ def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos
             self._value_serializer = value_serializer
             value_serializer_code = 0
         else:
-            raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
+            raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.', self._file)
     else:
-        raise ValueError('value serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())))
+        raise ValueError('value serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())), self._file)
 
     ## Key Serializer
     if key_serializer in serializers.serial_name_dict:
@@ -549,9 +577,9 @@ def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos
             self._key_serializer = key_serializer
             key_serializer_code = 0
         else:
-            raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
+            raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.', self._file)
     else:
-        raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())))
+        raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())), self._file)
 
     ## Write uuid, version, and other parameters and save encodings to new file
     self._n_bytes_file = n_bytes_file
@@ -635,9 +663,9 @@ def init_existing_fixed_booklet(self, base_param_bytes, key_serializer, n_keys_p
         if ('dumps' in class_methods) and ('loads' in class_methods):
             self._key_serializer = key_serializer
         else:
-            raise ValueError('If a custom class is passed for a serializer, then it must have dumps and loads methods.')
+            raise ValueError('If a custom class is passed for a serializer, then it must have dumps and loads methods.', self._file)
     else:
-        raise ValueError('How did you mess up key_serializer so bad?!')
+        raise ValueError('How did you mess up key_serializer so bad?!', self._file)
 
 
 def init_new_fixed_booklet(self, key_serializer, n_keys_pos, n_bytes_file, n_bytes_key, value_len, n_buckets, file_path, write_buffer_size):
@@ -669,9 +697,9 @@ def init_new_fixed_booklet(self, key_serializer, n_keys_pos, n_bytes_file, n_byt
             self._key_serializer = key_serializer
             key_serializer_code = 0
         else:
-            raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.')
+            raise ValueError('If a class is passed for a serializer, then it must have dumps and loads methods.', self._file)
     else:
-        raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())))
+        raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())), self._file)
 
     ## Write uuid, version, and other parameters and save encodings to new file
     self._n_bytes_file = n_bytes_file
@@ -740,7 +768,7 @@ def get_data_block_fixed(mm, data_block_pos, key, value, n_bytes_key, value_len)
         raise ValueError('One or both key and value must be True.')
 
 
-def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_buckets, sub_index_init_pos):
+def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_buckets, sub_index_init_pos, file):
     """
     Combines everything necessary to return a value.
     """
@@ -748,8 +776,8 @@ def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_b
     index_bucket = get_index_bucket(key_hash, n_buckets)
     bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
-    key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
-    data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file)
+    key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file, file)
+    data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file, file)
     value = get_data_block_fixed(mm, data_block_pos, False, True, n_bytes_key, value_len)
 
     return value
@@ -788,7 +816,7 @@ def iter_keys_values_fixed(mm, n_buckets, n_bytes_file, data_pos, key, value, n_
         yield get_data_block_fixed(mm, data_block_pos, key, value, n_bytes_key, value_len)
 
 
-def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, value_len, n_bytes_file, n_buckets, sub_index_init_pos):
+def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, value_len, n_bytes_file, n_buckets, sub_index_init_pos, file):
     """
 
     """
@@ -798,8 +826,8 @@ def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, d
         index_bucket = get_index_bucket(key_hash, n_buckets)
         bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
         bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
-        key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
-        data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file)
+        key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file, file)
+        data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file, file)
 
         mm.seek(data_block_pos)
 
@@ -885,7 +913,7 @@ def prune_file_fixed(mm, n_buckets, n_bytes_file, n_bytes_key, value_len, sub_in
             try:
                pos = hash_key_list[pos+1:].index(key_hash) + pos+1
                append(pos)
-            except ValueError:
+            except:
                 break
 
         for data_index_pos in hash_key_positions:

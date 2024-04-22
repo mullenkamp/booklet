@@ -7,7 +7,7 @@ Created on Sun Mar 10 13:55:17 2024
 """
 import pytest
 import io
-from booklet import Booklet, __version__, FixedValue
+from booklet import Booklet, __version__, FixedValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
@@ -126,7 +126,7 @@ def test_delete_len():
             try:
                 _ = f[index]
                 raise ValueError()
-            except KeyError:
+            except utils.KeyError:
                 pass
     
         assert new_len == len(data_dict)
@@ -273,7 +273,7 @@ def test_delete_len_fixed():
             try:
                 _ = f[index]
                 raise ValueError()
-            except KeyError:
+            except utils.KeyError:
                 pass
     
         assert new_len == len(data_dict2)
@@ -314,7 +314,6 @@ def test_set_items_get_items_fixed():
         assert value == data_dict2[11]
 
 
-
 ## Always make this last!!!
 def test_clear_fixed():
     with FixedValue(file_path, 'w') as f:
@@ -342,14 +341,27 @@ def test_clear_fixed():
 
 
 
+# data_dict = {str(key): list(range(key)) for key in range(2, 1000)}
 
+# def blt_write_test():
+#     with Booklet(file_path, 'n', key_serializer='str', value_serializer='pickle') as f:
+#         for key, value in data_dict.items():
+#             f[key] = value
 
+# def blt_read_test():
+#     with Booklet(file_path) as f:
+#         for key in f:
+#             value = f[key]
 
+# def shelve_write_test():
+#     with shelve.open(file_path, 'n') as f:
+#         for key, value in data_dict.items():
+#             f[key] = value
 
-
-
-
-
+# def shelve_read_test():
+#     with shelve.open(file_path) as f:
+#         for key in f:
+#             value = f[key]
 
 
 
