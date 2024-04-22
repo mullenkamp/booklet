@@ -7,7 +7,7 @@ Created on Sun Mar 10 13:55:17 2024
 """
 import pytest
 import io
-from booklet import Booklet, __version__, FixedValue
+from booklet import Booklet, __version__, FixedValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
@@ -126,7 +126,7 @@ def test_delete_len():
             try:
                 _ = f[index]
                 raise ValueError()
-            except KeyError:
+            except utils.KeyError:
                 pass
     
         assert new_len == len(data_dict)
@@ -273,7 +273,7 @@ def test_delete_len_fixed():
             try:
                 _ = f[index]
                 raise ValueError()
-            except KeyError:
+            except utils.KeyError:
                 pass
     
         assert new_len == len(data_dict2)
