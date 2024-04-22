@@ -50,8 +50,8 @@ class EmptyBooklet(MutableMapping):
         ## Serialize to bytes
         try:
             key = self._key_serializer.dumps(key)
-        except:
-            raise utils.SerializeError('key could not be serialized.', self._file)
+        except Exception as exc:
+            raise utils.SerializeError(exc, self)
 
         return key
 
@@ -67,8 +67,8 @@ class EmptyBooklet(MutableMapping):
         ## Serialize to bytes
         try:
             value = self._value_serializer.dumps(value)
-        except:
-            raise utils.SerializeError('value could not be serialized.', self._file)
+        except Exception as exc:
+            raise utils.SerializeError(exc, self)
 
         return value
 
@@ -106,9 +106,9 @@ class EmptyBooklet(MutableMapping):
         return utils.contains_key(self._mm, hash_key, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
 
     def get(self, key, default=None):
-        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos, self._file)
+        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos)
 
-        if value is None:
+        if not value:
             return default
         else:
             return self._post_value(value)
@@ -124,7 +124,7 @@ class EmptyBooklet(MutableMapping):
                     # self._n_keys += 1
 
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
 
     def prune(self):
@@ -135,16 +135,16 @@ class EmptyBooklet(MutableMapping):
             with self._thread_lock:
                 self._data_pos, recovered_space = utils.prune_file(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._sub_index_init_pos)
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
         return recovered_space
 
 
     def __getitem__(self, key):
-        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos, self._file)
+        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos)
 
-        if value is None:
-            raise utils.KeyError(key, self._file)
+        if not value:
+            raise utils.KeyError(key, self)
         else:
             return self._post_value(value)
 
@@ -156,20 +156,20 @@ class EmptyBooklet(MutableMapping):
                 # self._n_keys += 1
 
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
 
     def __delitem__(self, key):
         if self._write:
             if key not in self:
-                raise utils.KeyError(key, self._file)
+                raise utils.KeyError(key, self)
 
             delete_key_hash = utils.hash_key(self._pre_key(key))
             with self._thread_lock:
                 self._buffer_index[delete_key_hash] = 0
                 # self._n_keys -= 1
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
     def __enter__(self):
         return self
@@ -186,18 +186,19 @@ class EmptyBooklet(MutableMapping):
                     # self._n_keys -= 1
             self.sync()
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
     def close(self):
-        self.sync()
-        if self._write:
-            self._write_buffer.close()
-        # if fcntl_import:
-        #     fcntl.flock(self._file, fcntl.LOCK_UN)
-        portalocker.lock(self._file, portalocker.LOCK_UN)
-
-        self._mm.close()
-        self._file.close()
+        if not self._mm.closed:
+            self.sync()
+            if self._write:
+                self._write_buffer.close()
+            # if fcntl_import:
+            #     fcntl.flock(self._file, fcntl.LOCK_UN)
+            portalocker.lock(self._file, portalocker.LOCK_UN)
+    
+            self._mm.close()
+            self._file.close()
 
     # def __del__(self):
     #     self.close()
@@ -210,8 +211,9 @@ class EmptyBooklet(MutableMapping):
                 if self._buffer_index:
                     utils.flush_write_buffer(self._mm, self._write_buffer)
                     self._sync_index()
-                self._mm.seek(self._n_keys_pos)
+                # self._mm.seek(self._n_keys_pos)
                 # self._mm.write(utils.int_to_bytes(self._n_keys, 4))
+
                 self._mm.flush()
                 self._file.flush()
 
@@ -340,7 +342,7 @@ class Booklet(EmptyBooklet):
             sys_uuid = base_param_bytes[:16]
             if sys_uuid != utils.uuid_variable_blt:
                 portalocker.lock(self._file, portalocker.LOCK_UN)
-                raise utils.TypeError('This is not the correct file type.', self._file)
+                raise utils.TypeError('This is not the correct file type.', self)
 
             # version = utils.bytes_to_int(base_param_bytes[16:18])
 
@@ -475,7 +477,7 @@ class FixedValue(EmptyBooklet):
             sys_uuid = base_param_bytes[:16]
             if sys_uuid != utils.uuid_fixed_blt:
                 portalocker.lock(self._file, portalocker.LOCK_UN)
-                raise utils.TypeError('This is not the correct file type.', self._file)
+                raise utils.TypeError('This is not the correct file type.', self)
             # version = utils.bytes_to_int(base_param_bytes[16:18])
 
             ## Init for existing file
@@ -483,7 +485,7 @@ class FixedValue(EmptyBooklet):
 
         else:
             if value_len is None:
-                raise utils.ValueError('value_len must be an int.', self._file)
+                raise utils.ValueError('value_len must be an int.', self)
 
             ## Init to create a new file
             utils.init_new_fixed_booklet(self, key_serializer, self._n_keys_pos, n_bytes_file, n_bytes_key, value_len, n_buckets, file_path, write_buffer_size)
@@ -502,9 +504,9 @@ class FixedValue(EmptyBooklet):
             yield self._post_value(value)
 
     def get(self, key, default=None):
-        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos, self._file)
+        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos)
 
-        if value is None:
+        if not value:
             return default
         else:
             return self._post_value(value)
@@ -519,11 +521,11 @@ class FixedValue(EmptyBooklet):
         if self._write:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos, self._file)
+                    n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
                     self._n_keys += n_new_keys
 
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
 
     def prune(self):
@@ -534,16 +536,16 @@ class FixedValue(EmptyBooklet):
             with self._thread_lock:
                 self._data_pos, recovered_space = utils.prune_file_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._sub_index_init_pos)
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
         return recovered_space
 
 
     def __getitem__(self, key):
-        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos, self._file)
+        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos)
 
-        if value is None:
-            raise utils.KeyError(key, self._file)
+        if not value:
+            raise utils.KeyError(key, self)
         else:
             return self._post_value(value)
 
@@ -551,24 +553,24 @@ class FixedValue(EmptyBooklet):
     def __setitem__(self, key, value):
         if self._write:
             with self._thread_lock:
-                n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos, self._file)
+                n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
                 self._n_keys += n_new_keys
 
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
 
     def __delitem__(self, key):
         if self._write:
             if key not in self:
-                raise utils.KeyError(key, self._file)
+                raise utils.KeyError(key, self)
 
             delete_key_hash = utils.hash_key(self._pre_key(key))
             with self._thread_lock:
                 self._buffer_index[delete_key_hash] = 0
                 self._n_keys -= 1
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
 
     def clear(self):
@@ -580,7 +582,7 @@ class FixedValue(EmptyBooklet):
                     self._n_keys -= 1
             self.sync()
         else:
-            raise utils.ValueError('File is open for read only.', self._file)
+            raise utils.ValueError('File is open for read only.', self)
 
     def sync(self):
         if self._write:
