@@ -326,13 +326,19 @@ def test_clear_fixed():
 
 
 
+# data_dict2 = {key: blake2s(key.to_bytes(4, 'little', signed=True), digest_size=13).digest() for key in range(2, 100)}
+# b1 = blake2s(b'0', digest_size=13).digest()
+
+# def set_test2():
+#     with FixedValue(file_path, 'n', key_serializer='uint2', value_len=13) as f:
+#         for key in range(2, 10000):
+#             f[key] = b1
 
 
-
-
-
-
-
+# def set_test1():
+#     with Booklet(file_path, 'n', key_serializer='uint2') as f:
+#         for key in range(2, 10000):
+#             f[key] = b1
 
 
 
