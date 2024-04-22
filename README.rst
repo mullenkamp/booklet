@@ -8,7 +8,7 @@ It is thread-safe (using thread locks on writes) and multiprocessing-safe (using
 
 Deletes do not remove data from the file directly. Similarly, reassigning a value to an existing key adds a new key/value set to the file. During normal usage, the user will not notice a difference when requesting a key/value set, but the file size will grow. If size becomes an issue because of lots of deletes or reassignments, then the user should run the "prune" method to remove old key/value sets.
 
-When error occurs and is caught by the module (e.g. trying to access a key that doesn't exist), booklet will properly close the file. This means it will sync any changes and "unlock" the file. There will be errors that can occur that are not caught and in these circumstances there are no guarantees for what happens to the file.
+When an error occurs and is caught by the module (e.g. trying to access a key that doesn't exist), booklet will properly close the file. This means it will sync any changes and "unlock" the file. There will be errors that can occur that are not caught and in these circumstances there are no guarantees for what happens to the file.
 
 Installation
 ------------
