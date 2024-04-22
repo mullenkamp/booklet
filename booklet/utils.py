@@ -14,8 +14,8 @@ from threading import Lock
 import portalocker
 import mmap
 
-import serializers
-# from . import serializers
+# import serializers
+from . import serializers
 
 ############################################
 ### Parameters

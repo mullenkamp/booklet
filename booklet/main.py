@@ -22,11 +22,11 @@ from collections import Counter, defaultdict, deque
 #     fcntl_import = False
 
 
-import utils
-# from . import utils
+# import utils
+from . import utils
 
-import serializers
-# from . import serializers
+# import serializers
+from . import serializers
 
 
 # page_size = mmap.ALLOCATIONGRANULARITY
