@@ -22,11 +22,11 @@ from collections import Counter, defaultdict, deque
 #     fcntl_import = False
 
 
-# import utils
-from . import utils
+import utils
+# from . import utils
 
-# import serializers
-from . import serializers
+import serializers
+# from . import serializers
 
 
 # page_size = mmap.ALLOCATIONGRANULARITY
@@ -262,12 +262,12 @@ class EmptyBooklet(MutableMapping):
                     utils.flush_write_buffer(self._mm, self._write_buffer)
                     self._sync_index()
                 self._mm.seek(self._n_keys_pos)
-                self._mm.write(utils.int_to_bytes(self._n_keys, 4))
+                # self._mm.write(utils.int_to_bytes(self._n_keys, 4))
                 self._mm.flush()
                 self._file.flush()
 
     def _sync_index(self):
-        self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets, self._n_keys, self._sub_index_init_pos)
+        self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
         self._buffer_index = {}
 
 
@@ -631,6 +631,17 @@ class FixedValue(EmptyBooklet):
             self.sync()
         else:
             raise ValueError('File is open for read only.')
+
+    def sync(self):
+        if self._write:
+            with self._thread_lock:
+                if self._buffer_index:
+                    utils.flush_write_buffer(self._mm, self._write_buffer)
+                    self._sync_index()
+                self._mm.seek(self._n_keys_pos)
+                self._mm.write(utils.int_to_bytes(self._n_keys, 4))
+                self._mm.flush()
+                self._file.flush()
 
 
 

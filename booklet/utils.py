@@ -14,8 +14,8 @@ from threading import Lock
 import portalocker
 import mmap
 
-# import serializers
-from . import serializers
+import serializers
+# from . import serializers
 
 ############################################
 ### Parameters
@@ -323,7 +323,7 @@ def flush_write_buffer(mm, write_buffer):
         return file_len
 
 
-def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets, n_keys, sub_index_init_pos):
+def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets, sub_index_init_pos):
     """
 
     """
@@ -558,14 +558,15 @@ def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos
     self._n_bytes_key = n_bytes_key
     self._n_bytes_value = n_bytes_value
     self._n_buckets = n_buckets
-    self._n_keys = 0
+    # self._n_keys = 0
+    n_keys = 0
     self._data_block_rel_pos_delete_bytes = int_to_bytes(0, n_bytes_file)
 
     n_bytes_file_bytes = int_to_bytes(n_bytes_file, 1)
     n_bytes_key_bytes = int_to_bytes(n_bytes_key, 1)
     n_bytes_value_bytes = int_to_bytes(n_bytes_value, 1)
     n_buckets_bytes = int_to_bytes(n_buckets, 4)
-    n_keys_bytes = int_to_bytes(self._n_keys, 4)
+    n_keys_bytes = int_to_bytes(n_keys, 4)
     saved_value_serializer_bytes = int_to_bytes(value_serializer_code, 2)
     saved_key_serializer_bytes = int_to_bytes(key_serializer_code, 2)
 

@@ -119,9 +119,9 @@ def test_delete_len():
             f[index] = 0
             del f[index]
 
-            new_len = len(f)
-    
             f.sync()
+
+            new_len = len(f)
     
             try:
                 _ = f[index]
@@ -256,13 +256,14 @@ def test_len_fixed():
 # @pytest.mark.parametrize('index', [10, 12])
 def test_delete_len_fixed():
     indexes = [10, 12]
+    b1 = blake2s(b'0', digest_size=13).digest()
 
     for index in indexes:
         _ = data_dict2.pop(index)
     
         with FixedValue(file_path, 'w') as f:
-            f[index] = 0
-            f[index] = 0
+            f[index] = b1
+            f[index] = b1
             del f[index]
     
             new_len = len(f)
