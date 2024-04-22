@@ -106,7 +106,7 @@ class EmptyBooklet(MutableMapping):
         return utils.contains_key(self._mm, hash_key, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
 
     def get(self, key, default=None):
-        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos)
+        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos, self._file)
 
         if value is None:
             return default
@@ -141,7 +141,7 @@ class EmptyBooklet(MutableMapping):
 
 
     def __getitem__(self, key):
-        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos)
+        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos, self._file)
 
         if value is None:
             raise utils.KeyError(key, self._file)
@@ -502,7 +502,7 @@ class FixedValue(EmptyBooklet):
             yield self._post_value(value)
 
     def get(self, key, default=None):
-        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos)
+        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos, self._file)
 
         if value is None:
             return default
@@ -540,7 +540,7 @@ class FixedValue(EmptyBooklet):
 
 
     def __getitem__(self, key):
-        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos)
+        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos, self._file)
 
         if value is None:
             raise utils.KeyError(key, self._file)

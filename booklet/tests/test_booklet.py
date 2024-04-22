@@ -314,7 +314,6 @@ def test_set_items_get_items_fixed():
         assert value == data_dict2[11]
 
 
-
 ## Always make this last!!!
 def test_clear_fixed():
     with FixedValue(file_path, 'w') as f:

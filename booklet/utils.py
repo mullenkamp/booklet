@@ -249,7 +249,7 @@ def contains_key(mm, key_hash, n_bytes_file, n_buckets, sub_index_init_pos):
     return True
 
 
-def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets, sub_index_init_pos):
+def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets, sub_index_init_pos, file):
     """
     Combines everything necessary to return a value.
     """
@@ -257,8 +257,8 @@ def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buc
     index_bucket = get_index_bucket(key_hash, n_buckets)
     bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
-    key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
-    data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file)
+    key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file, file)
+    data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file, file)
     value = get_data_block(mm, data_block_pos, key=False, value=True, n_bytes_key=n_bytes_key, n_bytes_value=n_bytes_value)
 
     return value
@@ -768,7 +768,7 @@ def get_data_block_fixed(mm, data_block_pos, key, value, n_bytes_key, value_len)
         raise ValueError('One or both key and value must be True.')
 
 
-def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_buckets, sub_index_init_pos):
+def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_buckets, sub_index_init_pos, file):
     """
     Combines everything necessary to return a value.
     """
@@ -776,8 +776,8 @@ def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_b
     index_bucket = get_index_bucket(key_hash, n_buckets)
     bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
-    key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
-    data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file)
+    key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file, file)
+    data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file, file)
     value = get_data_block_fixed(mm, data_block_pos, False, True, n_bytes_key, value_len)
 
     return value
@@ -816,7 +816,7 @@ def iter_keys_values_fixed(mm, n_buckets, n_bytes_file, data_pos, key, value, n_
         yield get_data_block_fixed(mm, data_block_pos, key, value, n_bytes_key, value_len)
 
 
-def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, value_len, n_bytes_file, n_buckets, sub_index_init_pos):
+def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, value_len, n_bytes_file, n_buckets, sub_index_init_pos, file):
     """
 
     """
@@ -826,8 +826,8 @@ def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, d
         index_bucket = get_index_bucket(key_hash, n_buckets)
         bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
         bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
-        key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
-        data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file)
+        key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file, file)
+        data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file, file)
 
         mm.seek(data_block_pos)
 
