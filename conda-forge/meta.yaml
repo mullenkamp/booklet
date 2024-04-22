@@ -1,13 +1,13 @@
 {% set name = "booklet" %}
-{% set version = "0.1.0" %}
+{% set version = "0.1.12" %}
 
 package:
   name: {{ name|lower }}
   version: {{ version }}
 
 source:
-  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/shelflet-{{ version }}.tar.gz
-  sha256: fd81f3df631f41db1300772f21848442c7a769b396e616401887249b2c5895ea
+  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/booklet-{{ version }}.tar.gz
+  sha256: 3729a2055ef824be3a02965c91889fded08b0b5ce1894592e3374cc4df036bab
 
 build:
   noarch: python
@@ -19,11 +19,11 @@ requirements:
     - hatchling
   run:
     - python >=3.8
-    - zstandard
+    - portalocker
 
 test:
   imports:
-    - shelflet
+    - booklet
   commands:
     - pip check
   requires:

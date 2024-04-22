@@ -8,6 +8,7 @@ Created on Fri Jan 13 09:41:51 2023
 import io
 import pickle
 import json
+import hashlib
 
 imports = set()
 try:
@@ -278,8 +279,15 @@ serial_name_dict = {n: i+1 for i, n in enumerate(serial_dict)}
 serial_int_dict = {(i+1): v for i, v in enumerate(serial_dict.values())}
 
 
+#########################################
+### Fixed width serialisers
 
 
+# class Md5:
+#     def dumps(obj, byte_len):
+#         return hashlib.md5(obj)
+#     def loads(obj):
+#         return msgpack.loads(obj)
 
 
 
