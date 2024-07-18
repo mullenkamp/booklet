@@ -20,10 +20,12 @@ from . import serializers
 ############################################
 ### Parameters
 
-sub_index_init_pos_dict = {
-    'variable': 33,
-    'fixed': 36
-    }
+# sub_index_init_pos_dict = {
+#     'variable': 33,
+#     'fixed': 36
+#     }
+
+sub_index_init_pos = 200
 
 n_keys_pos_dict = {
     'variable': 25,
@@ -35,7 +37,7 @@ key_hash_len = 13
 uuid_variable_blt = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 
-version = 1
+version = 2
 version_bytes = version.to_bytes(2, 'little', signed=False)
 
 
@@ -89,7 +91,7 @@ def hash_key(key):
     return blake2s(key, digest_size=key_hash_len).digest()
 
 
-def create_initial_bucket_indexes(n_buckets, n_bytes_file, sub_index_init_pos):
+def create_initial_bucket_indexes(n_buckets, n_bytes_file):
     """
 
     """
@@ -105,14 +107,14 @@ def get_index_bucket(key_hash, n_buckets):
     return bytes_to_int(key_hash) % n_buckets
 
 
-def get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos):
+def get_bucket_index_pos(index_bucket, n_bytes_file):
     """
 
     """
     return sub_index_init_pos + (index_bucket * n_bytes_file)
 
 
-def get_data_index_pos(n_buckets, n_bytes_file, sub_index_init_pos):
+def get_data_index_pos(n_buckets, n_bytes_file):
     """
 
     """
@@ -217,13 +219,13 @@ def get_data_block(mm, data_block_pos, key=False, value=False, n_bytes_key=1, n_
         raise ValueError('One or both key and value must be True.')
 
 
-def contains_key(mm, key_hash, n_bytes_file, n_buckets, sub_index_init_pos):
+def contains_key(mm, key_hash, n_bytes_file, n_buckets):
     """
     Determine if a key is present in the file.
     """
     # key_hash = hash_key(key)
     index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
 
     bucket_block_len = key_hash_len + n_bytes_file
@@ -247,7 +249,7 @@ def contains_key(mm, key_hash, n_bytes_file, n_buckets, sub_index_init_pos):
     return True
 
 
-def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets, sub_index_init_pos):
+def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets):
     """
     Combines everything necessary to return a value.
     """
@@ -255,7 +257,7 @@ def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buc
 
     key_hash = hash_key(key)
     index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
     key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
     if key_hash_pos:
@@ -266,7 +268,7 @@ def get_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buc
     return value
 
 
-def iter_keys_values(mm, n_buckets, n_bytes_file, data_pos, key, value, n_bytes_key, n_bytes_value, sub_index_init_pos):
+def iter_keys_values(mm, n_buckets, n_bytes_file, data_pos, key, value, n_bytes_key, n_bytes_value):
     """
 
     """
@@ -297,6 +299,25 @@ def iter_keys_values(mm, n_buckets, n_bytes_file, data_pos, key, value, n_bytes_
         data_block_pos = data_pos + data_block_rel_pos - 1
 
         yield get_data_block(mm, data_block_pos, key, value, n_bytes_key, n_bytes_value)
+
+
+# def delete_key_value(mm, key, data_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets):
+#     """
+#     Deletes the ke/value in the data block and deletes the key hash.
+#     """
+#     key_hash = hash_key(key)
+#     index_bucket = get_index_bucket(key_hash, n_buckets)
+#     bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
+#     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
+#     key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
+#     data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file)
+
+#     mm.seek(data_block_pos)
+#     key_len_value_len = mm.read(n_bytes_key + n_bytes_value)
+#     key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
+#     value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
+
+
 
 
 def write_data_blocks(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, n_bytes_value):
@@ -353,7 +374,7 @@ def flush_write_buffer(mm, write_buffer):
         return file_len
 
 
-def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets, sub_index_init_pos):
+def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets):
     """
 
     """
@@ -382,7 +403,7 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets, sub_index_
     new_indexes_len = 0
     new_bucket_indexes = {}
     for bucket in range(n_buckets):
-        bucket_index_pos = get_bucket_index_pos(bucket, n_bytes_file, sub_index_init_pos)
+        bucket_index_pos = get_bucket_index_pos(bucket, n_bytes_file)
         old_bucket_pos = get_bucket_pos(mm, bucket_index_pos, n_bytes_file)
         new_bucket_pos = old_bucket_pos + new_indexes_len
         new_bucket_indexes[bucket] = new_bucket_pos
@@ -416,11 +437,11 @@ def update_index(mm, buffer_index, data_pos, n_bytes_file, n_buckets, sub_index_
     return new_data_pos
 
 
-def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, sub_index_init_pos):
+def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value):
     """
 
     """
-    data_index_pos = get_data_index_pos(n_buckets, n_bytes_file, sub_index_init_pos)
+    data_index_pos = get_data_index_pos(n_buckets, n_bytes_file)
     data_pos = get_data_pos(mm, data_index_pos, n_bytes_file)
     bucket_block_len = key_hash_len + n_bytes_file
     hash_buckets_pos = data_index_pos + n_bytes_file
@@ -438,9 +459,9 @@ def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, sub_inde
     start_pos = 0
     for i in range(n_bucket_blocks):
         # print(i)
-        data_rel_pos_index = start_pos+key_hash_len
+        data_rel_pos_index = start_pos + key_hash_len
         key_hash = hash_bucket_bytes[start_pos:data_rel_pos_index]
-        start_pos = data_rel_pos_index+n_bytes_file
+        start_pos = data_rel_pos_index + n_bytes_file
         data_rel_pos = bytes_to_int(hash_bucket_bytes[data_rel_pos_index:start_pos])
         hash_key_list.append(key_hash)
         data_rel_pos_list.append(data_rel_pos)
@@ -520,7 +541,7 @@ def init_existing_variable_booklet(self, base_param_bytes, key_serializer, value
     saved_value_serializer = bytes_to_int(base_param_bytes[29:31])
     saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
 
-    data_index_pos = get_data_index_pos(self._n_buckets, self._n_bytes_file, self._sub_index_init_pos)
+    data_index_pos = get_data_index_pos(self._n_buckets, self._n_bytes_file)
     self._data_pos = get_data_pos(self._mm, data_index_pos, self._n_bytes_file)
 
     ## Pull out the serializers
@@ -600,7 +621,13 @@ def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos
     saved_value_serializer_bytes = int_to_bytes(value_serializer_code, 2)
     saved_key_serializer_bytes = int_to_bytes(key_serializer_code, 2)
 
-    bucket_bytes = create_initial_bucket_indexes(n_buckets, n_bytes_file, self._sub_index_init_pos)
+    bucket_bytes = create_initial_bucket_indexes(n_buckets, n_bytes_file)
+
+    init_write_bytes = uuid_variable_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes
+
+    extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
+
+    init_write_bytes += extra_bytes
 
     self._file = io.open(file_path, 'w+b')
 
@@ -611,7 +638,7 @@ def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos
     self._thread_lock = Lock()
 
     with self._thread_lock:
-        _ = self._file.write(uuid_variable_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_keys_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
+        _ = self._file.write(init_write_bytes + bucket_bytes)
         self._file.flush()
 
         self._write_buffer = mmap.mmap(-1, write_buffer_size)
@@ -638,7 +665,7 @@ def init_existing_fixed_booklet(self, base_param_bytes, key_serializer, n_keys_p
     # saved_value_serializer = bytes_to_int(base_param_bytes[32:34])
     saved_key_serializer = bytes_to_int(base_param_bytes[34:36])
 
-    data_index_pos = get_data_index_pos(self._n_buckets, self._n_bytes_file, self._sub_index_init_pos)
+    data_index_pos = get_data_index_pos(self._n_buckets, self._n_bytes_file)
     self._data_pos = get_data_pos(self._mm, data_index_pos, self._n_bytes_file)
 
     ## Pull out the serializers
@@ -719,7 +746,12 @@ def init_new_fixed_booklet(self, key_serializer, n_keys_pos, n_bytes_file, n_byt
     saved_value_serializer_bytes = int_to_bytes(0, 2)
     saved_key_serializer_bytes = int_to_bytes(key_serializer_code, 2)
 
-    bucket_bytes = create_initial_bucket_indexes(n_buckets, n_bytes_file, self._sub_index_init_pos)
+    bucket_bytes = create_initial_bucket_indexes(n_buckets, n_bytes_file)
+
+    init_write_bytes = uuid_fixed_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + value_len_bytes + n_buckets_bytes + n_keys_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes
+
+    extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
+    init_write_bytes += extra_bytes
 
     self._file = io.open(file_path, 'w+b')
 
@@ -730,7 +762,7 @@ def init_new_fixed_booklet(self, key_serializer, n_keys_pos, n_bytes_file, n_byt
     self._thread_lock = Lock()
 
     with self._thread_lock:
-        _ = self._file.write(uuid_fixed_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + value_len_bytes + n_buckets_bytes + n_keys_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + bucket_bytes)
+        _ = self._file.write(init_write_bytes + bucket_bytes)
         self._file.flush()
 
         self._write_buffer = mmap.mmap(-1, write_buffer_size)
@@ -770,7 +802,7 @@ def get_data_block_fixed(mm, data_block_pos, key, value, n_bytes_key, value_len)
         raise ValueError('One or both key and value must be True.')
 
 
-def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_buckets, sub_index_init_pos):
+def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_buckets):
     """
     Combines everything necessary to return a value.
     """
@@ -778,7 +810,7 @@ def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_b
 
     key_hash = hash_key(key)
     index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
     bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
     key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
     if key_hash_pos:
@@ -789,7 +821,7 @@ def get_value_fixed(mm, key, data_pos, n_bytes_file, n_bytes_key, value_len, n_b
     return value
 
 
-def iter_keys_values_fixed(mm, n_buckets, n_bytes_file, data_pos, key, value, n_bytes_key, value_len, sub_index_init_pos):
+def iter_keys_values_fixed(mm, n_buckets, n_bytes_file, data_pos, key, value, n_bytes_key, value_len):
     """
 
     """
@@ -822,15 +854,15 @@ def iter_keys_values_fixed(mm, n_buckets, n_bytes_file, data_pos, key, value, n_
         yield get_data_block_fixed(mm, data_block_pos, key, value, n_bytes_key, value_len)
 
 
-def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, value_len, n_bytes_file, n_buckets, sub_index_init_pos):
+def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, value_len, n_bytes_file, n_buckets):
     """
 
     """
     key_hash = hash_key(key)
 
-    if contains_key(mm, key_hash, n_bytes_file, n_buckets, sub_index_init_pos):
+    if contains_key(mm, key_hash, n_bytes_file, n_buckets):
         index_bucket = get_index_bucket(key_hash, n_buckets)
-        bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file, sub_index_init_pos)
+        bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_file)
         bucket_pos1, bucket_pos2 = get_bucket_pos2(mm, bucket_index_pos, n_bytes_file)
         key_hash_pos = get_key_hash_pos(mm, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
         data_block_pos = get_data_block_pos(mm, key_hash_pos, data_pos, n_bytes_file)
@@ -876,11 +908,11 @@ def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, d
     return n_new_keys
 
 
-def prune_file_fixed(mm, n_buckets, n_bytes_file, n_bytes_key, value_len, sub_index_init_pos):
+def prune_file_fixed(mm, n_buckets, n_bytes_file, n_bytes_key, value_len):
     """
 
     """
-    data_index_pos = get_data_index_pos(n_buckets, n_bytes_file, sub_index_init_pos)
+    data_index_pos = get_data_index_pos(n_buckets, n_bytes_file)
     data_pos = get_data_pos(mm, data_index_pos, n_bytes_file)
     bucket_block_len = key_hash_len + n_bytes_file
     hash_buckets_pos = data_index_pos + n_bytes_file

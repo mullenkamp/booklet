@@ -26,7 +26,7 @@ from collections import Counter, defaultdict, deque
 from . import utils
 
 # import serializers
-from . import serializers
+# from . import serializers
 
 
 # page_size = mmap.ALLOCATIONGRANULARITY
@@ -80,15 +80,15 @@ class EmptyBooklet(MutableMapping):
         return value
 
     def keys(self):
-        for key in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, False, self._n_bytes_key, self._n_bytes_value, self._sub_index_init_pos):
+        for key in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, False, self._n_bytes_key, self._n_bytes_value):
             yield self._post_key(key)
 
     def items(self):
-        for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value, self._sub_index_init_pos):
+        for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value):
             yield self._post_key(key), self._post_value(value)
 
     def values(self):
-        for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value, self._sub_index_init_pos):
+        for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value):
             yield self._post_value(value)
 
     def __iter__(self):
@@ -103,10 +103,10 @@ class EmptyBooklet(MutableMapping):
     def __contains__(self, key):
         bytes_key = self._pre_key(key)
         hash_key = utils.hash_key(bytes_key)
-        return utils.contains_key(self._mm, hash_key, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
+        return utils.contains_key(self._mm, hash_key, self._n_bytes_file, self._n_buckets)
 
     def get(self, key, default=None):
-        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos)
+        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets)
 
         if not value:
             return default
@@ -133,7 +133,7 @@ class EmptyBooklet(MutableMapping):
         """
         if self._write:
             with self._thread_lock:
-                self._data_pos, recovered_space = utils.prune_file(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._sub_index_init_pos)
+                self._data_pos, recovered_space = utils.prune_file(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value)
         else:
             raise utils.ValueError('File is open for read only.', self)
 
@@ -141,7 +141,7 @@ class EmptyBooklet(MutableMapping):
 
 
     def __getitem__(self, key):
-        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._sub_index_init_pos)
+        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets)
 
         if not value:
             raise utils.KeyError(key, self)
@@ -218,7 +218,7 @@ class EmptyBooklet(MutableMapping):
                 self._file.flush()
 
     def _sync_index(self):
-        self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
+        self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_file, self._n_buckets)
         self._buffer_index = {}
 
 
@@ -310,7 +310,6 @@ class Booklet(EmptyBooklet):
         self._write_buffer_size = write_buffer_size
         self._write_buffer_pos = 0
         self._file_path = fp
-        self._sub_index_init_pos = utils.sub_index_init_pos_dict['variable']
         self._n_keys_pos = utils.n_keys_pos_dict['variable']
 
         ## Load or assign encodings and attributes
@@ -336,7 +335,7 @@ class Booklet(EmptyBooklet):
                 self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
             ## Pull out base parameters
-            base_param_bytes = self._mm.read(self._sub_index_init_pos)
+            base_param_bytes = self._mm.read(utils.sub_index_init_pos)
 
             # TODO: Run uuid and version check
             sys_uuid = base_param_bytes[:16]
@@ -344,7 +343,9 @@ class Booklet(EmptyBooklet):
                 portalocker.lock(self._file, portalocker.LOCK_UN)
                 raise utils.TypeError('This is not the correct file type.', self)
 
-            # version = utils.bytes_to_int(base_param_bytes[16:18])
+            version = utils.bytes_to_int(base_param_bytes[16:18])
+            if version < utils.version:
+                raise ValueError('File is an older version.')
 
             ## Init for existing file
             utils.init_existing_variable_booklet(self, base_param_bytes, key_serializer, value_serializer, self._n_keys_pos)
@@ -445,7 +446,6 @@ class FixedValue(EmptyBooklet):
         self._write_buffer_size = write_buffer_size
         self._write_buffer_pos = 0
         self._file_path = fp
-        self._sub_index_init_pos = utils.sub_index_init_pos_dict['fixed']
         self._n_keys_pos = utils.n_keys_pos_dict['fixed']
 
         ## Load or assign encodings and attributes
@@ -471,14 +471,17 @@ class FixedValue(EmptyBooklet):
                 self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
             ## Pull out base parameters
-            base_param_bytes = self._mm.read(self._sub_index_init_pos)
+            base_param_bytes = self._mm.read(utils.sub_index_init_pos)
 
             # TODO: Run uuid and version check
             sys_uuid = base_param_bytes[:16]
             if sys_uuid != utils.uuid_fixed_blt:
                 portalocker.lock(self._file, portalocker.LOCK_UN)
                 raise utils.TypeError('This is not the correct file type.', self)
-            # version = utils.bytes_to_int(base_param_bytes[16:18])
+
+            version = utils.bytes_to_int(base_param_bytes[16:18])
+            if version < utils.version:
+                raise ValueError('File is an older version.')
 
             ## Init for existing file
             utils.init_existing_fixed_booklet(self, base_param_bytes, key_serializer, self._n_keys_pos)
@@ -492,19 +495,19 @@ class FixedValue(EmptyBooklet):
 
 
     def keys(self):
-        for key in utils.iter_keys_values_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, False, self._n_bytes_key, self._value_len, self._sub_index_init_pos):
+        for key in utils.iter_keys_values_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, False, self._n_bytes_key, self._value_len):
             yield self._post_key(key)
     
     def items(self):
-        for key, value in utils.iter_keys_values_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._value_len, self._sub_index_init_pos):
+        for key, value in utils.iter_keys_values_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._value_len):
             yield self._post_key(key), self._post_value(value)
     
     def values(self):
-        for key, value in utils.iter_keys_values_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._value_len, self._sub_index_init_pos):
+        for key, value in utils.iter_keys_values_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._data_pos, True, True, self._n_bytes_key, self._value_len):
             yield self._post_value(value)
 
     def get(self, key, default=None):
-        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos)
+        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets)
 
         if not value:
             return default
@@ -521,7 +524,7 @@ class FixedValue(EmptyBooklet):
         if self._write:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
+                    n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets)
                     self._n_keys += n_new_keys
 
         else:
@@ -534,7 +537,7 @@ class FixedValue(EmptyBooklet):
         """
         if self._write:
             with self._thread_lock:
-                self._data_pos, recovered_space = utils.prune_file_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._sub_index_init_pos)
+                self._data_pos, recovered_space = utils.prune_file_fixed(self._mm, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len)
         else:
             raise utils.ValueError('File is open for read only.', self)
 
@@ -542,7 +545,7 @@ class FixedValue(EmptyBooklet):
 
 
     def __getitem__(self, key):
-        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._sub_index_init_pos)
+        value = utils.get_value_fixed(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets)
 
         if not value:
             raise utils.KeyError(key, self)
@@ -553,7 +556,7 @@ class FixedValue(EmptyBooklet):
     def __setitem__(self, key, value):
         if self._write:
             with self._thread_lock:
-                n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets, self._sub_index_init_pos)
+                n_new_keys = utils.write_data_blocks_fixed(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._value_len, self._n_bytes_file, self._n_buckets)
                 self._n_keys += n_new_keys
 
         else:
