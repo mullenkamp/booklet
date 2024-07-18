@@ -13,6 +13,7 @@ from threading import Lock
 import portalocker
 from itertools import count
 from collections import Counter, defaultdict, deque
+import weakref
 # from multiprocessing import Manager, shared_memory
 
 # try:
@@ -195,10 +196,8 @@ class EmptyBooklet(MutableMapping):
                 self._write_buffer.close()
             # if fcntl_import:
             #     fcntl.flock(self._file, fcntl.LOCK_UN)
-            portalocker.lock(self._file, portalocker.LOCK_UN)
-    
-            self._mm.close()
-            self._file.close()
+            # portalocker.lock(self._file, portalocker.LOCK_UN)
+        self._finalizer()
 
     # def __del__(self):
     #     self.close()
@@ -334,6 +333,8 @@ class Booklet(EmptyBooklet):
                 portalocker.lock(self._file, portalocker.LOCK_SH)
                 self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
+            self._finalizer = weakref.finalize(self, utils.close_file, self._mm, self._file)
+
             ## Pull out base parameters
             base_param_bytes = self._mm.read(utils.sub_index_init_pos)
 
@@ -457,6 +458,7 @@ class FixedValue(EmptyBooklet):
                 # if fcntl_import:
                 #     fcntl.flock(self._file, fcntl.LOCK_EX)
                 portalocker.lock(self._file, portalocker.LOCK_EX)
+
                 self._thread_lock = Lock()
 
                 ## Write buffers
@@ -469,6 +471,8 @@ class FixedValue(EmptyBooklet):
                 #     fcntl.flock(self._file, fcntl.LOCK_SH)
                 portalocker.lock(self._file, portalocker.LOCK_SH)
                 self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
+
+            self._finalizer = weakref.finalize(self, utils.close_file, self._mm, self._file)
 
             ## Pull out base parameters
             base_param_bytes = self._mm.read(utils.sub_index_init_pos)

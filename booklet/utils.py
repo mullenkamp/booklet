@@ -70,6 +70,18 @@ class SerializeError(BaseError):
 ### Functions
 
 
+def close_file(mm, file):
+    """
+    This is to be run as a finalizer to ensure that the file is closed properly.
+    """
+    if not mm.closed:
+        mm.flush()
+        file.flush()
+        portalocker.lock(file, portalocker.LOCK_UN)
+        mm.close()
+        file.close()
+
+
 def bytes_to_int(b, signed=False):
     """
     Remember for a single byte, I only need to do b[0] to get the int. And it's really fast as compared to the function here. This is only needed for bytes > 1.
