@@ -13,6 +13,7 @@ import inspect
 from threading import Lock
 import portalocker
 import mmap
+import weakref
 
 # import serializers
 from . import serializers
@@ -641,15 +642,16 @@ def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos
 
     init_write_bytes += extra_bytes
 
-    self._file = io.open(file_path, 'w+b')
-
     ## Locks
     # if fcntl_import:
     #     fcntl.flock(self._file, fcntl.LOCK_EX)
-    portalocker.lock(self._file, portalocker.LOCK_EX)
+    # portalocker.lock(self._file, portalocker.LOCK_EX)
     self._thread_lock = Lock()
 
     with self._thread_lock:
+        self._file = io.open(file_path, 'w+b')
+        portalocker.lock(self._file, portalocker.LOCK_EX)
+
         _ = self._file.write(init_write_bytes + bucket_bytes)
         self._file.flush()
 
@@ -657,6 +659,8 @@ def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos
         self._buffer_index = {}
 
         self._mm = mmap.mmap(self._file.fileno(), 0)
+        self._finalizer = weakref.finalize(self, close_file, self._mm, self._file)
+
         self._data_pos = len(self._mm)
 
 
@@ -765,15 +769,16 @@ def init_new_fixed_booklet(self, key_serializer, n_keys_pos, n_bytes_file, n_byt
     extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
     init_write_bytes += extra_bytes
 
-    self._file = io.open(file_path, 'w+b')
-
     ## Locks
     # if fcntl_import:
     #     fcntl.flock(self._file, fcntl.LOCK_EX)
-    portalocker.lock(self._file, portalocker.LOCK_EX)
+    # portalocker.lock(self._file, portalocker.LOCK_EX)
     self._thread_lock = Lock()
 
     with self._thread_lock:
+        self._file = io.open(file_path, 'w+b')
+        portalocker.lock(self._file, portalocker.LOCK_EX)
+
         _ = self._file.write(init_write_bytes + bucket_bytes)
         self._file.flush()
 
@@ -781,6 +786,8 @@ def init_new_fixed_booklet(self, key_serializer, n_keys_pos, n_bytes_file, n_byt
         self._buffer_index = {}
 
         self._mm = mmap.mmap(self._file.fileno(), 0)
+        self._finalizer = weakref.finalize(self, close_file, self._mm, self._file)
+
         self._data_pos = len(self._mm)
 
 
