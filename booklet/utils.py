@@ -28,10 +28,10 @@ from . import serializers
 
 sub_index_init_pos = 200
 
-n_keys_pos_dict = {
-    'variable': 25,
-    'fixed': 28
-    }
+# n_keys_pos_dict = {
+#     'variable': 25,
+#     'fixed': 28
+#     }
 
 key_hash_len = 13
 
@@ -45,26 +45,26 @@ version_bytes = version.to_bytes(2, 'little', signed=False)
 ############################################
 ### Exception classes
 
-class BaseError(Exception):
-    def __init__(self, message, blt=None, *args):
-        self.message = message # without this you may get DeprecationWarning
-        # Special attribute you desire with your Error, 
-        blt.close()
-        # allow users initialize misc. arguments as any other builtin Error
-        super(BaseError, self).__init__(message, *args)
+# class BaseError(Exception):
+#     def __init__(self, message, blt=None, *args):
+#         self.message = message # without this you may get DeprecationWarning
+#         # Special attribute you desire with your Error,
+#         blt.close()
+#         # allow users initialize misc. arguments as any other builtin Error
+#         super(BaseError, self).__init__(message, *args)
 
 
-class ValueError(BaseError):
-    pass
+# class ValueError(BaseError):
+#     pass
 
-class TypeError(BaseError):
-    pass
+# class TypeError(BaseError):
+#     pass
 
-class KeyError(BaseError):
-    pass
+# class KeyError(BaseError):
+#     pass
 
-class SerializeError(BaseError):
-    pass
+# class SerializeError(BaseError):
+#     pass
 
 
 ############################################
@@ -542,15 +542,15 @@ def prune_file(mm, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value):
     return data_pos, recovered_space
 
 
-def init_existing_variable_booklet(self, base_param_bytes, key_serializer, value_serializer, n_keys_pos):
+def init_existing_variable_booklet(self, base_param_bytes, key_serializer, value_serializer):
     """
 
     """
     self._n_bytes_file = bytes_to_int(base_param_bytes[18:19])
     self._n_bytes_key = bytes_to_int(base_param_bytes[19:20])
     self._n_bytes_value = bytes_to_int(base_param_bytes[20:21])
-    self._n_buckets = bytes_to_int(base_param_bytes[21:n_keys_pos])
-    # self._n_keys = bytes_to_int(base_param_bytes[n_keys_pos:29])
+    self._n_buckets = bytes_to_int(base_param_bytes[21:25])
+    # self._n_keys = bytes_to_int(base_param_bytes[25:29])
     saved_value_serializer = bytes_to_int(base_param_bytes[29:31])
     saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
 
@@ -585,7 +585,7 @@ def init_existing_variable_booklet(self, base_param_bytes, key_serializer, value
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets, file_path, write_buffer_size):
+def init_new_variable_booklet(self, key_serializer, value_serializer, n_bytes_file, n_bytes_key, n_bytes_value, n_buckets, file_path, write_buffer_size):
     """
 
     """
@@ -669,15 +669,15 @@ def init_new_variable_booklet(self, key_serializer, value_serializer, n_keys_pos
 ### Fixed value alternative functions
 
 
-def init_existing_fixed_booklet(self, base_param_bytes, key_serializer, n_keys_pos):
+def init_existing_fixed_booklet(self, base_param_bytes, key_serializer):
     """
 
     """
     self._n_bytes_file = bytes_to_int(base_param_bytes[18:19])
     self._n_bytes_key = bytes_to_int(base_param_bytes[19:20])
     self._value_len = bytes_to_int(base_param_bytes[20:24])
-    self._n_buckets = bytes_to_int(base_param_bytes[24:n_keys_pos])
-    self._n_keys = bytes_to_int(base_param_bytes[n_keys_pos:32])
+    self._n_buckets = bytes_to_int(base_param_bytes[24:28])
+    self._n_keys = bytes_to_int(base_param_bytes[28:32])
     # saved_value_serializer = bytes_to_int(base_param_bytes[32:34])
     saved_key_serializer = bytes_to_int(base_param_bytes[34:36])
 
@@ -713,7 +713,7 @@ def init_existing_fixed_booklet(self, base_param_bytes, key_serializer, n_keys_p
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_new_fixed_booklet(self, key_serializer, n_keys_pos, n_bytes_file, n_bytes_key, value_len, n_buckets, file_path, write_buffer_size):
+def init_new_fixed_booklet(self, key_serializer, n_bytes_file, n_bytes_key, value_len, n_buckets, file_path, write_buffer_size):
     """
 
     """
@@ -900,26 +900,26 @@ def write_data_blocks_fixed(mm, write_buffer, write_buffer_size, buffer_index, d
         file_len = mm.tell()
 
         key_bytes_len = len(key)
-    
+
         write_bytes = int_to_bytes(key_bytes_len, n_bytes_key) + key + value
-    
+
         write_len = len(write_bytes)
-    
+
         wb_space = write_buffer_size - wb_pos
         if write_len > wb_space:
             file_len = flush_write_buffer(mm, write_buffer)
             wb_pos = 0
-    
+
         if write_len > write_buffer_size:
             mm.resize(file_len + write_len)
             new_n_bytes = mm.write(write_bytes)
             wb_pos = 0
         else:
             new_n_bytes = write_buffer.write(write_bytes)
-    
+
         if key_hash in buffer_index:
             _ = buffer_index.pop(key_hash)
-    
+
         buffer_index[key_hash] = file_len + wb_pos - data_pos + 1
 
         n_new_keys = 1
