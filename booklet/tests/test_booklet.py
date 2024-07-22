@@ -66,7 +66,7 @@ def test_threading_writes():
             for key, value in data_dict.items():
                 future = executor.submit(set_item, f, key, value)
                 futures.append(future)
-    
+
         _ = concurrent.futures.wait(futures)
 
     with Booklet(file_path) as f:
@@ -113,24 +113,29 @@ def test_delete_len():
 
     for index in indexes:
         _ = data_dict.pop(index)
-    
+
         with Booklet(file_path, 'w') as f:
             f[index] = 0
             f[index] = 0
             del f[index]
 
-            f.sync()
+            # f.sync()
 
             new_len = len(f)
 
             try:
                 _ = f[index]
                 raise ValueError()
-            except utils.KeyError:
+            except KeyError:
                 pass
-    
+
         assert new_len == len(data_dict)
 
+def test_items2():
+    with Booklet(file_path) as f:
+        for key, value in f.items():
+            source_value = data_dict[key]
+            assert source_value == value
 
 def test_values():
     with Booklet(file_path) as f:
@@ -212,7 +217,7 @@ def test_threading_writes_fixed():
             for key, value in data_dict2.items():
                 future = executor.submit(set_item, f, key, value)
                 futures.append(future)
-    
+
         _ = concurrent.futures.wait(futures)
 
     with FixedValue(file_path) as f:
@@ -228,6 +233,11 @@ def test_keys_fixed():
     source_keys = set(list(data_dict2.keys()))
 
     assert source_keys == keys
+
+    with FixedValue(file_path) as f:
+        for key in keys:
+            val = f[key]
+
 
 
 def test_items_fixed():
@@ -260,22 +270,22 @@ def test_delete_len_fixed():
 
     for index in indexes:
         _ = data_dict2.pop(index)
-    
+
         with FixedValue(file_path, 'w') as f:
             f[index] = b1
             f[index] = b1
             del f[index]
-    
+
             new_len = len(f)
-    
+
             f.sync()
-    
+
             try:
                 _ = f[index]
                 raise ValueError()
-            except utils.KeyError:
+            except KeyError:
                 pass
-    
+
         assert new_len == len(data_dict2)
 
 
