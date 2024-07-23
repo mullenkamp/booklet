@@ -7,7 +7,7 @@ Created on Sun Mar 10 13:55:17 2024
 """
 import pytest
 import io
-from booklet import Booklet, __version__, FixedValue, utils
+from booklet import Booklet, __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
@@ -39,28 +39,28 @@ data_dict = {key: list(range(key)) for key in range(2, 30)}
 
 
 def test_set_items():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
         for key, value in data_dict.items():
             f[key] = value
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         value = f[10]
 
     assert value == list(range(10))
 
 
 def test_update():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
         f.update(data_dict)
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         value = f[10]
 
     assert value == list(range(10))
 
 
 def test_threading_writes():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for key, value in data_dict.items():
@@ -69,14 +69,14 @@ def test_threading_writes():
 
         _ = concurrent.futures.wait(futures)
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         value = f[10]
 
     assert value == list(range(10))
 
 
 def test_keys():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         keys = set(list(f.keys()))
 
     source_keys = set(list(data_dict.keys()))
@@ -85,14 +85,14 @@ def test_keys():
 
 
 def test_items():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key, value in f.items():
             source_value = data_dict[key]
             assert source_value == value
 
 
 def test_contains():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key in data_dict:
             if key not in f:
                 raise KeyError(key)
@@ -101,7 +101,7 @@ def test_contains():
 
 
 def test_len():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         new_len = len(f)
 
     assert len(data_dict) == new_len
@@ -114,7 +114,7 @@ def test_delete_len():
     for index in indexes:
         _ = data_dict.pop(index)
 
-        with Booklet(file_path, 'w') as f:
+        with VariableValue(file_path, 'w') as f:
             f[index] = 0
             f[index] = 0
             del f[index]
@@ -132,38 +132,38 @@ def test_delete_len():
         assert new_len == len(data_dict)
 
 def test_items2():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key, value in f.items():
             source_value = data_dict[key]
             assert source_value == value
 
 def test_values():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key, source_value in data_dict.items():
             value = f[key]
             assert source_value == value
 
 
 def test_prune():
-    with Booklet(file_path, 'w') as f:
+    with VariableValue(file_path, 'w') as f:
         f.prune()
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key, source_value in data_dict.items():
             value = f[key]
             assert source_value == value
 
 
 def test_set_items_get_items():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
         for key, value in data_dict.items():
             f[key] = value
 
-    with Booklet(file_path, 'w') as f:
+    with VariableValue(file_path, 'w') as f:
         f[50] = [0, 0]
         value = f[11]
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         value = f[50]
         assert value == [0, 0]
 
@@ -174,7 +174,7 @@ def test_set_items_get_items():
 
 ## Always make this last!!!
 def test_clear():
-    with Booklet(file_path, 'w') as f:
+    with VariableValue(file_path, 'w') as f:
         f.clear()
 
         assert (len(f) == 0) and (len(list(f.keys())) == 0)

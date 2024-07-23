@@ -40,7 +40,7 @@ from . import utils
 
 
 
-class EmptyBooklet(MutableMapping):
+class Booklet(MutableMapping):
     """
     Base class
     """
@@ -99,7 +99,7 @@ class EmptyBooklet(MutableMapping):
 
         # return next(counter)
 
-        len1 = (self._data_pos - utils.sub_index_init_pos - self._n_buckets*utils.n_bytes_index)/(utils.n_bytes_file + utils.key_hash_len)
+        len1 = (self._data_pos - utils.sub_index_init_pos - (self._n_buckets + 1)*utils.n_bytes_index)/(utils.n_bytes_file + utils.key_hash_len)
 
         return int(len1 - self._n_deletes)
 
@@ -219,6 +219,9 @@ class EmptyBooklet(MutableMapping):
     def _sync_index(self):
         self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_buckets)
         self._buffer_index = {}
+        n_keys = len(self)
+        if n_keys > self._n_buckets:
+            self._data_pos, self._n_buckets = utils.reindex(self._mm, self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_buckets, n_keys)
 
 
 
@@ -226,7 +229,7 @@ class EmptyBooklet(MutableMapping):
 ### Variable length value Booklet
 
 
-class Booklet(EmptyBooklet):
+class VariableValue(Booklet):
     """
     Open a persistent dictionary for reading and writing. This class allows for variable length values (and keys). On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag (unless a custom serializer is passed).
 
@@ -348,14 +351,14 @@ class Booklet(EmptyBooklet):
 
 
 ### Alias
-VariableValue = Booklet
+# VariableValue = Booklet
 
 
 #######################################################
 ### Fixed length value Booklet
 
 
-class FixedValue(EmptyBooklet):
+class FixedValue(Booklet):
     """
     Open a persistent dictionary for reading and writing. This class required a globally fixed value length. For example, this can be used for fixed length hashes or timestamps. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -604,4 +607,4 @@ def open(
     +---------+-------------------------------------------+
 
     """
-    return Booklet(file_path, flag, key_serializer, value_serializer, write_buffer_size, n_buckets)
+    return VariableValue(file_path, flag, key_serializer, value_serializer, write_buffer_size, n_buckets)

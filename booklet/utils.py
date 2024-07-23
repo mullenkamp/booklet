@@ -42,6 +42,13 @@ uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 version = 2
 version_bytes = version.to_bytes(2, 'little', signed=False)
 
+n_buckets_reindex = {
+    10007: 100003,
+    100003: 1000003,
+    1000003: 10000019,
+    10000019: 100000007,
+    100000007: None
+    }
 
 ############################################
 ### Exception classes
@@ -458,6 +465,83 @@ def update_index(mm, buffer_index, data_pos, n_bytes_index, n_bytes_file, n_buck
     # mm.flush()
 
     return new_data_pos
+
+
+def reindex(mm, data_pos, n_bytes_index, n_bytes_file, n_buckets, n_keys):
+    """
+
+    """
+    new_n_buckets = n_buckets_reindex[n_buckets]
+    if new_n_buckets:
+
+        ## Assign all of the components for sanity...
+        old_file_len = len(mm)
+        # data_len = old_file_len - data_pos
+        one_extra_index_bytes_len = key_hash_len + n_bytes_file
+
+        old_bucket_index_pos = sub_index_init_pos
+        old_bucket_index_len = (n_buckets + 1) * n_bytes_index
+        new_bucket_index_len = (new_n_buckets + 1) * n_bytes_index
+        new_data_index_len = one_extra_index_bytes_len * n_keys
+        new_data_index_pos = sub_index_init_pos + new_bucket_index_len
+        new_data_pos = new_data_index_pos + new_data_index_len
+        old_data_index_pos = old_bucket_index_pos + old_bucket_index_len
+        old_data_index_len = data_pos - old_data_index_pos
+        old_n_keys = int(old_data_index_len/one_extra_index_bytes_len)
+
+        temp_data_pos = data_pos + new_bucket_index_len + new_data_index_len
+        temp_old_data_index_pos = old_data_index_pos + new_bucket_index_len + new_data_index_len
+        new_file_len = old_file_len + new_bucket_index_len + new_data_index_len
+
+        ## Build the new bucket index and data index
+        mm.resize(new_file_len)
+        mm.move(temp_old_data_index_pos, old_data_index_pos, old_file_len - old_data_index_pos)
+
+        ## Run the reindexing
+        new_bucket_index_bytes = bytearray(create_initial_bucket_indexes(new_n_buckets, n_bytes_index))
+        np_bucket_index = np.frombuffer(new_bucket_index_bytes, dtype=np.uint32)
+
+        moving_data_index_pos = temp_old_data_index_pos
+        for i in range(old_n_keys):
+            mm.seek(moving_data_index_pos)
+            bucket_index1 = mm.read(one_extra_index_bytes_len)
+            data_block_rel_pos = bytes_to_int(bucket_index1[key_hash_len:])
+            if data_block_rel_pos:
+                key_hash = bucket_index1[:key_hash_len]
+                index_bucket = get_index_bucket(key_hash, new_n_buckets)
+                old_bucket_pos = np_bucket_index[index_bucket]
+                moving_data_pos = np_bucket_index[-1]
+                mm.move(old_bucket_pos + one_extra_index_bytes_len, old_bucket_pos, moving_data_pos - old_bucket_pos)
+                mm.seek(old_bucket_pos)
+                mm.write(key_hash + int_to_bytes(data_block_rel_pos, n_bytes_file))
+                np_bucket_index[index_bucket+1:] += one_extra_index_bytes_len
+                moving_data_index_pos += one_extra_index_bytes_len
+
+        ## Move the indexes back to the original position and resize the file
+        mm.move(new_data_pos, temp_data_pos, new_file_len - temp_data_pos)
+        mm.resize(new_file_len - old_bucket_index_len - old_data_index_len)
+
+        ## Write back the bucket index which includes the data position
+        mm.seek(sub_index_init_pos)
+        mm.write(new_bucket_index_bytes)
+
+        mm.flush()
+
+        return new_data_pos, new_n_buckets
+    else:
+        return data_pos, n_buckets
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def prune_file(mm, n_buckets, n_bytes_index, n_bytes_file, n_bytes_key, n_bytes_value, data_pos):
