@@ -39,7 +39,7 @@ data_dict = {key: list(range(key)) for key in range(2, 30)}
 
 
 def test_set_items():
-    with VariableValue(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint2', value_serializer='pickle') as f:
         for key, value in data_dict.items():
             f[key] = value
 
@@ -50,7 +50,7 @@ def test_set_items():
 
 
 def test_update():
-    with VariableValue(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint2', value_serializer='pickle') as f:
         f.update(data_dict)
 
     with VariableValue(file_path) as f:
@@ -60,7 +60,7 @@ def test_update():
 
 
 def test_threading_writes():
-    with VariableValue(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint2', value_serializer='pickle') as f:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for key, value in data_dict.items():
@@ -155,7 +155,7 @@ def test_prune():
 
 
 def test_set_items_get_items():
-    with VariableValue(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint2', value_serializer='pickle') as f:
         for key, value in data_dict.items():
             f[key] = value
 
@@ -170,6 +170,21 @@ def test_set_items_get_items():
         value = f[11]
         assert value == list(range(11))
 
+
+def test_reindex():
+    """
+
+    """
+    with VariableValue(file_path, 'w') as f:
+        for i in range(10000):
+            f[51+i] = i
+
+        f.sync()
+
+        n_buckets = f._n_buckets
+        value = f[51]
+
+    assert (n_buckets > 20000) and (value == 0)
 
 
 ## Always make this last!!!
@@ -190,7 +205,7 @@ data_dict2 = {key: blake2s(key.to_bytes(4, 'little', signed=True), digest_size=1
 
 
 def test_set_items_fixed():
-    with FixedValue(file_path, 'n', key_serializer='uint1', value_len=13) as f:
+    with FixedValue(file_path, 'n', key_serializer='uint2', value_len=13) as f:
         for key, value in data_dict2.items():
             f[key] = value
 
@@ -201,7 +216,7 @@ def test_set_items_fixed():
 
 
 def test_update_fixed():
-    with FixedValue(file_path, 'n', key_serializer='uint1', value_len=13) as f:
+    with FixedValue(file_path, 'n', key_serializer='uint2', value_len=13) as f:
         f.update(data_dict2)
 
     with FixedValue(file_path) as f:
@@ -211,7 +226,7 @@ def test_update_fixed():
 
 
 def test_threading_writes_fixed():
-    with FixedValue(file_path, 'n', key_serializer='uint1', value_len=13) as f:
+    with FixedValue(file_path, 'n', key_serializer='uint2', value_len=13) as f:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for key, value in data_dict2.items():
@@ -308,7 +323,7 @@ def test_prune_fixed():
 
 def test_set_items_get_items_fixed():
     b1 = blake2s(b'0', digest_size=13).digest()
-    with FixedValue(file_path, 'n', key_serializer='uint1', value_len=13) as f:
+    with FixedValue(file_path, 'n', key_serializer='uint2', value_len=13) as f:
         for key, value in data_dict2.items():
             f[key] = value
 
@@ -322,6 +337,23 @@ def test_set_items_get_items_fixed():
 
         value = f[11]
         assert value == data_dict2[11]
+
+
+def test_reindex_fixed():
+    """
+
+    """
+    b1 = blake2s(b'0', digest_size=13).digest()
+    with FixedValue(file_path, 'w') as f:
+        for i in range(10000):
+            f[51+i] = b1
+
+        f.sync()
+
+        n_buckets = f._n_buckets
+        value = f[51]
+
+    assert (n_buckets > 20000) and (value == b1)
 
 
 ## Always make this last!!!
@@ -377,8 +409,18 @@ def test_clear_fixed():
 # if not f._mm.closed:
 #     print('oops')
 
+# n = 100000
+
+# def make_test_file(n):
+#     with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+#         for i in range(n):
+#             f[i] = i
 
 
+# def test_index_speed(n):
+#     with VariableValue(file_path, 'r') as f:
+#         for i in range(n):
+#             val = f[i]
 
 
 

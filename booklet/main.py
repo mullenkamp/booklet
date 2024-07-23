@@ -220,7 +220,7 @@ class Booklet(MutableMapping):
         self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_buckets)
         self._buffer_index = {}
         n_keys = len(self)
-        if n_keys > self._n_buckets:
+        if n_keys > self._n_buckets*8:
             self._data_pos, self._n_buckets = utils.reindex(self._mm, self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_buckets, n_keys)
 
 
@@ -252,9 +252,6 @@ class VariableValue(Booklet):
     value_serializer : str, class, or None
         Similar to the key_serializer, except for the values.
 
-    n_buckets : int
-        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be at least ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance. Just keep the number of buckets at approximately the number of keys you expect to have.
-
     Returns
     -------
     Booklet
@@ -278,7 +275,7 @@ class VariableValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000, n_buckets:int =10007):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000):
         """
 
         """
@@ -303,6 +300,7 @@ class VariableValue(Booklet):
         self._write_buffer_size = write_buffer_size
         self._write_buffer_pos = 0
         self._file_path = fp
+        n_buckets = 10007
         # self._n_keys_pos = utils.n_keys_pos_dict['variable']
 
         ## Load or assign encodings and attributes
@@ -336,7 +334,7 @@ class VariableValue(Booklet):
             sys_uuid = base_param_bytes[:16]
             if sys_uuid != utils.uuid_variable_blt:
                 portalocker.lock(self._file, portalocker.LOCK_UN)
-                raise utils.TypeError('This is not the correct file type.', self)
+                raise TypeError('This is not the correct file type.')
 
             version = utils.bytes_to_int(base_param_bytes[16:18])
             if version < utils.version:
@@ -381,9 +379,6 @@ class FixedValue(Booklet):
     value_serializer : str, class, or None
         Similar to the key_serializer, except for the values.
 
-    n_buckets : int
-        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be at least ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance. Just keep the number of buckets at approximately the number of keys you expect to have.
-
     Returns
     -------
     Booklet
@@ -407,7 +402,7 @@ class FixedValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, write_buffer_size: int = 5000000, value_len: int=None, n_buckets:int =10007):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, write_buffer_size: int = 5000000, value_len: int=None):
         """
 
         """
@@ -432,6 +427,7 @@ class FixedValue(Booklet):
         self._write_buffer_size = write_buffer_size
         self._write_buffer_pos = 0
         self._file_path = fp
+        n_buckets = 10007
         # self._n_keys_pos = utils.n_keys_pos_dict['fixed']
 
         ## Load or assign encodings and attributes
@@ -558,7 +554,7 @@ class FixedValue(Booklet):
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000, n_buckets:int =10007):
+    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -580,9 +576,6 @@ def open(
 
     value_serializer : str, class, or None
         Similar to the key_serializer, except for the values.
-
-    n_buckets : int
-        The number of hash buckets to put all of the kay hashes for the "hash table". This number should be at least ~2 magnitudes under the max number of keys expected to be in the db. Below ~3 magnitudes then you'll get poorer read performance. Just keep the number of buckets at approximately the number of keys you expect to have.
 
     Returns
     -------
@@ -607,4 +600,4 @@ def open(
     +---------+-------------------------------------------+
 
     """
-    return VariableValue(file_path, flag, key_serializer, value_serializer, write_buffer_size, n_buckets)
+    return VariableValue(file_path, flag, key_serializer, value_serializer, write_buffer_size)
