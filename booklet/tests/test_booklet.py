@@ -7,7 +7,7 @@ Created on Sun Mar 10 13:55:17 2024
 """
 import pytest
 import io
-from booklet import Booklet, __version__, FixedValue, utils
+from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
@@ -39,44 +39,44 @@ data_dict = {key: list(range(key)) for key in range(2, 30)}
 
 
 def test_set_items():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
         for key, value in data_dict.items():
             f[key] = value
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         value = f[10]
 
     assert value == list(range(10))
 
 
 def test_update():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
         f.update(data_dict)
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         value = f[10]
 
     assert value == list(range(10))
 
 
 def test_threading_writes():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for key, value in data_dict.items():
                 future = executor.submit(set_item, f, key, value)
                 futures.append(future)
-    
+
         _ = concurrent.futures.wait(futures)
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         value = f[10]
 
     assert value == list(range(10))
 
 
 def test_keys():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         keys = set(list(f.keys()))
 
     source_keys = set(list(data_dict.keys()))
@@ -85,14 +85,14 @@ def test_keys():
 
 
 def test_items():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key, value in f.items():
             source_value = data_dict[key]
             assert source_value == value
 
 
 def test_contains():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key in data_dict:
             if key not in f:
                 raise KeyError(key)
@@ -101,7 +101,7 @@ def test_contains():
 
 
 def test_len():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         new_len = len(f)
 
     assert len(data_dict) == new_len
@@ -113,52 +113,57 @@ def test_delete_len():
 
     for index in indexes:
         _ = data_dict.pop(index)
-    
-        with Booklet(file_path, 'w') as f:
+
+        with VariableValue(file_path, 'w') as f:
             f[index] = 0
             f[index] = 0
             del f[index]
 
-            f.sync()
+            # f.sync()
 
             new_len = len(f)
 
             try:
                 _ = f[index]
                 raise ValueError()
-            except utils.KeyError:
+            except KeyError:
                 pass
-    
+
         assert new_len == len(data_dict)
 
+def test_items2():
+    with VariableValue(file_path) as f:
+        for key, value in f.items():
+            source_value = data_dict[key]
+            assert source_value == value
 
 def test_values():
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key, source_value in data_dict.items():
             value = f[key]
             assert source_value == value
 
 
 def test_prune():
-    with Booklet(file_path, 'w') as f:
+    with VariableValue(file_path, 'w') as f:
         f.prune()
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         for key, source_value in data_dict.items():
             value = f[key]
             assert source_value == value
 
 
 def test_set_items_get_items():
-    with Booklet(file_path, 'n', key_serializer='uint1', value_serializer='pickle') as f:
+    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
         for key, value in data_dict.items():
             f[key] = value
 
-    with Booklet(file_path, 'w') as f:
+    with VariableValue(file_path, 'w') as f:
         f[50] = [0, 0]
         value = f[11]
 
-    with Booklet(file_path) as f:
+    with VariableValue(file_path) as f:
         value = f[50]
         assert value == [0, 0]
 
@@ -166,10 +171,25 @@ def test_set_items_get_items():
         assert value == list(range(11))
 
 
+def test_reindex():
+    """
+
+    """
+    with VariableValue(file_path, 'w') as f:
+        for i in range(90000):
+            f[51+i] = i
+
+        f.sync()
+
+        n_buckets = f._n_buckets
+        value = f[51]
+
+    assert (n_buckets > 20000) and (value == 0)
+
 
 ## Always make this last!!!
 def test_clear():
-    with Booklet(file_path, 'w') as f:
+    with VariableValue(file_path, 'w') as f:
         f.clear()
 
         assert (len(f) == 0) and (len(list(f.keys())) == 0)
@@ -185,7 +205,7 @@ data_dict2 = {key: blake2s(key.to_bytes(4, 'little', signed=True), digest_size=1
 
 
 def test_set_items_fixed():
-    with FixedValue(file_path, 'n', key_serializer='uint1', value_len=13) as f:
+    with FixedValue(file_path, 'n', key_serializer='uint4', value_len=13) as f:
         for key, value in data_dict2.items():
             f[key] = value
 
@@ -196,7 +216,7 @@ def test_set_items_fixed():
 
 
 def test_update_fixed():
-    with FixedValue(file_path, 'n', key_serializer='uint1', value_len=13) as f:
+    with FixedValue(file_path, 'n', key_serializer='uint4', value_len=13) as f:
         f.update(data_dict2)
 
     with FixedValue(file_path) as f:
@@ -206,13 +226,13 @@ def test_update_fixed():
 
 
 def test_threading_writes_fixed():
-    with FixedValue(file_path, 'n', key_serializer='uint1', value_len=13) as f:
+    with FixedValue(file_path, 'n', key_serializer='uint4', value_len=13) as f:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for key, value in data_dict2.items():
                 future = executor.submit(set_item, f, key, value)
                 futures.append(future)
-    
+
         _ = concurrent.futures.wait(futures)
 
     with FixedValue(file_path) as f:
@@ -228,6 +248,11 @@ def test_keys_fixed():
     source_keys = set(list(data_dict2.keys()))
 
     assert source_keys == keys
+
+    with FixedValue(file_path) as f:
+        for key in keys:
+            val = f[key]
+
 
 
 def test_items_fixed():
@@ -260,22 +285,22 @@ def test_delete_len_fixed():
 
     for index in indexes:
         _ = data_dict2.pop(index)
-    
+
         with FixedValue(file_path, 'w') as f:
             f[index] = b1
             f[index] = b1
             del f[index]
-    
+
             new_len = len(f)
-    
+
             f.sync()
-    
+
             try:
                 _ = f[index]
                 raise ValueError()
-            except utils.KeyError:
+            except KeyError:
                 pass
-    
+
         assert new_len == len(data_dict2)
 
 
@@ -298,7 +323,7 @@ def test_prune_fixed():
 
 def test_set_items_get_items_fixed():
     b1 = blake2s(b'0', digest_size=13).digest()
-    with FixedValue(file_path, 'n', key_serializer='uint1', value_len=13) as f:
+    with FixedValue(file_path, 'n', key_serializer='uint4', value_len=13) as f:
         for key, value in data_dict2.items():
             f[key] = value
 
@@ -312,6 +337,23 @@ def test_set_items_get_items_fixed():
 
         value = f[11]
         assert value == data_dict2[11]
+
+
+def test_reindex_fixed():
+    """
+
+    """
+    b1 = blake2s(b'0', digest_size=13).digest()
+    with FixedValue(file_path, 'w') as f:
+        for i in range(90000):
+            f[51+i] = b1
+
+        f.sync()
+
+        n_buckets = f._n_buckets
+        value = f[51]
+
+    assert (n_buckets > 20000) and (value == b1)
 
 
 ## Always make this last!!!
@@ -367,8 +409,18 @@ def test_clear_fixed():
 # if not f._mm.closed:
 #     print('oops')
 
+# n = 100000
+
+# def make_test_file(n):
+#     with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+#         for i in range(n):
+#             f[i] = i
 
 
+# def test_index_speed(n):
+#     with VariableValue(file_path, 'r') as f:
+#         for i in range(n):
+#             val = f[i]
 
 
 
