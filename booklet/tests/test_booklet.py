@@ -7,7 +7,7 @@ Created on Sun Mar 10 13:55:17 2024
 """
 import pytest
 import io
-from booklet import Booklet, __version__, FixedValue, VariableValue, utils
+from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
