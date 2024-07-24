@@ -176,7 +176,7 @@ def test_reindex():
 
     """
     with VariableValue(file_path, 'w') as f:
-        for i in range(10000):
+        for i in range(90000):
             f[51+i] = i
 
         f.sync()
@@ -345,7 +345,7 @@ def test_reindex_fixed():
     """
     b1 = blake2s(b'0', digest_size=13).digest()
     with FixedValue(file_path, 'w') as f:
-        for i in range(10000):
+        for i in range(90000):
             f[51+i] = b1
 
         f.sync()
