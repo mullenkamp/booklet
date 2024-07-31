@@ -7,10 +7,12 @@ Created on Sun Mar 10 13:55:17 2024
 """
 import pytest
 import io
+import os
 from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
+import mmap
 
 ##############################################
 ### Parameters
@@ -409,18 +411,126 @@ def test_clear_fixed():
 # if not f._mm.closed:
 #     print('oops')
 
-# n = 100000
 
-# def make_test_file(n):
-#     with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
-#         for i in range(n):
-#             f[i] = i
+file_path = '/home/mike/data/cache/test1.blt'
+
+chunk_size = 1000
+b2 = b'0' * chunk_size
+n = 100000
+
+def make_test_file(n):
+    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+        for i in range(n):
+            f[i] = b2
 
 
-# def test_index_speed(n):
-#     with VariableValue(file_path, 'r') as f:
-#         for i in range(n):
-#             val = f[i]
+def test_index_speed(n):
+    with VariableValue(file_path, 'r') as f:
+        for i in range(n):
+            val = f[i]
+
+
+def test_resize1():
+    f = io.open(file_path, 'w+b')
+    f.write(b'0')
+    f.flush()
+
+    fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+    f.close()
+
+    fm.resize(256**5)
+
+    for i in range(n):
+        start = i * chunk_size
+        end = start + chunk_size
+        # fm.resize(end)
+        fm[start:end] = b2
+
+    fm.resize(chunk_size*n)
+
+    fm.close()
+
+
+def test_resize2():
+    f = io.open(file_path, 'w+b')
+    f.write(b'0')
+    f.flush()
+
+    fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+    f.close()
+
+    # fm.resize(256**5)
+
+    for i in range(n):
+        start = i * chunk_size
+        end = start + chunk_size
+        fm.resize(end)
+        fm[start:end] = b2
+        # fm.flush()
+
+    # fm.resize(chunk_size*n)
+
+    fm.close()
+
+
+def test_write1():
+    f = io.open(file_path, 'w+b')
+    for i in range(n):
+        # start = i * chunk_size
+        # end = start + chunk_size
+        f.write(b2)
+
+    f.close()
+
+
+def test_write2():
+    f = io.open(file_path, 'w+b')
+    f.write(b'0')
+    f.flush()
+
+    fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+    f.close()
+
+    for i in range(n):
+        fm.resize((i+1) * chunk_size)
+        fm.write(b2)
+
+    fm.close()
+
+
+def test_write3():
+    f = io.open(file_path, 'w+b')
+    f.write(b'0')
+    f.flush()
+
+    fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+    # f.close()
+
+    for i in range(n):
+        f.write(b2)
+        f.flush()
+        fm.resize((i+1) * chunk_size)
+
+    f.close()
+    fm.close()
+
+
+
+# f = io.open(file_path, 'w+b')
+# f.write(b'0123456789')
+# f.flush()
+
+# f.seek(1000000001)
+# f.write(b'1234')
+
+# fd = f.fileno()
+# os.copy_file_range(fd, fd, 1000000000, 1000000000, 0)
+
+# f.seek(0)
+
+# f.read(10)
+
+
 
 
 

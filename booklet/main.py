@@ -23,8 +23,8 @@ import weakref
 #     fcntl_import = False
 
 
-# import utils
-from . import utils
+import utils
+# from . import utils
 
 # import serializers
 # from . import serializers
@@ -79,15 +79,15 @@ class Booklet(MutableMapping):
         return value
 
     def keys(self):
-        for key in utils.iter_keys_values(self._mm, self._n_buckets, self._data_pos, True, False, self._n_bytes_key, self._n_bytes_value):
+        for key in utils.iter_keys_values(self._file, self._data_end_pos, self._write, self._n_buckets, True, False, self._n_bytes_key, self._n_bytes_value):
             yield self._post_key(key)
 
     def items(self):
-        for key, value in utils.iter_keys_values(self._mm, self._n_buckets, self._data_pos, True, True, self._n_bytes_key, self._n_bytes_value):
+        for key, value in utils.iter_keys_values(self._file, self._data_end_pos, self._write, self._n_buckets, True, True, self._n_bytes_key, self._n_bytes_value):
             yield self._post_key(key), self._post_value(value)
 
     def values(self):
-        for value in utils.iter_keys_values(self._mm, self._n_buckets, self._data_pos, False, True, self._n_bytes_key, self._n_bytes_value):
+        for value in utils.iter_keys_values(self._file, self._data_end_pos, self._write, self._n_buckets, False, True, self._n_bytes_key, self._n_bytes_value):
             yield self._post_value(value)
 
     def __iter__(self):
@@ -99,17 +99,24 @@ class Booklet(MutableMapping):
 
         # return next(counter)
 
-        len1 = (self._data_pos - utils.sub_index_init_pos - (self._n_buckets + 1)*utils.n_bytes_index)/(utils.n_bytes_file + utils.key_hash_len)
+        # if self._write:
+        #     self._file.seek(0, 2)
+        #     data_pos = self._file.tell()
+        # else:
+        #     data_pos = self._data_end_pos
+
+        len1 = (len(self._index_mmap) - self._index_n_bytes_skip - (self._n_buckets*utils.n_bytes_index))/(utils.n_bytes_file + utils.key_hash_len)
 
         return int(len1 - self._n_deletes)
 
     def __contains__(self, key):
         bytes_key = self._pre_key(key)
         hash_key = utils.hash_key(bytes_key)
-        return utils.contains_key(self._mm, hash_key, self._n_bytes_index, self._n_bytes_file, self._n_buckets)
+
+        return utils.contains_key(self._index_mmap, hash_key, self._n_bytes_index, self._n_bytes_file, self._n_buckets, self._index_n_bytes_skip)
 
     def get(self, key, default=None):
-        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets)
+        value = utils.get_value(self._index_mmap, self._file, self._pre_key(key), self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._index_n_bytes_skip)
 
         if not value:
             return default
@@ -123,8 +130,8 @@ class Booklet(MutableMapping):
         if self._write:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
-                    # self._n_keys += 1
+                    n_deletes = utils.write_data_blocks(self._file, self._index_mmap, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._index_n_bytes_skip, self._buffer_index, self._write_buffer, self._write_buffer_size)
+                    self._n_deletes += n_deletes
 
         else:
             raise ValueError('File is open for read only.')
@@ -144,7 +151,7 @@ class Booklet(MutableMapping):
 
 
     def __getitem__(self, key):
-        value = utils.get_value(self._mm, self._pre_key(key), self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets)
+        value = utils.get_value(self._index_mmap, self._file, self._pre_key(key), self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._index_n_bytes_skip)
 
         if not value:
             raise KeyError(key)
@@ -155,7 +162,8 @@ class Booklet(MutableMapping):
     def __setitem__(self, key, value):
         if self._write:
             with self._thread_lock:
-                utils.write_data_blocks(self._mm, self._write_buffer, self._write_buffer_size, self._buffer_index, self._data_pos, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value)
+                n_deletes = utils.write_data_blocks(self._file, self._index_mmap, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_bytes_value, self._n_buckets, self._index_n_bytes_skip, self._buffer_index, self._write_buffer, self._write_buffer_size)
+                self._n_deletes += n_deletes
 
         else:
             raise ValueError('File is open for read only.')
@@ -166,15 +174,13 @@ class Booklet(MutableMapping):
         Delete flags are written immediately as are the number of total deletes. This ensures that there are no sync issues. Deletes are generally rare, so this shouldn't impact most use cases.
         """
         if self._write:
+            self.sync()
             with self._thread_lock:
-                if self._buffer_index:
-                    utils.flush_write_buffer(self._mm, self._write_buffer)
-                    self._sync_index()
-                del_bool = utils.assign_delete_flags(self._mm, self._pre_key(key), self._n_buckets, self._n_bytes_index, self._n_bytes_file, self._data_pos)
+                del_bool = utils.assign_delete_flags(self._index_mmap, self._file, self._pre_key(key), self._n_buckets, self._n_bytes_index, self._n_bytes_file, self._index_n_bytes_skip)
                 if del_bool:
                     self._n_deletes += 1
-                    self._mm.seek(self._n_deletes_pos)
-                    self._mm.write(utils.int_to_bytes(self._n_deletes, 4))
+                    self._file.seek(self._n_deletes_pos)
+                    self._file.write(utils.int_to_bytes(self._n_deletes, 4))
                 else:
                     raise KeyError(key)
         else:
@@ -190,15 +196,15 @@ class Booklet(MutableMapping):
         if self._write:
             with self._thread_lock:
                 utils.clear(self._mm, self._n_buckets, self._n_bytes_index, self._n_deletes_pos)
-                self._data_pos = len(self._mm)
+                # self._data_pos = len(self._mm)
         else:
             raise ValueError('File is open for read only.')
 
     def close(self):
-        if not self._mm.closed:
+        if not self._index_mmap.closed:
             self.sync()
-            if self._write:
-                self._write_buffer.close()
+            # if self._write:
+            #     self._write_buffer.close()
         self._finalizer()
 
     # def __del__(self):
@@ -210,18 +216,18 @@ class Booklet(MutableMapping):
         if self._write:
             with self._thread_lock:
                 if self._buffer_index:
-                    utils.flush_write_buffer(self._mm, self._write_buffer)
-                    self._sync_index()
-
-                self._mm.flush()
+                    utils.flush_write_buffer(self._file, self._write_buffer)
+                self._sync_index()
                 self._file.flush()
 
     def _sync_index(self):
-        self._data_pos = utils.update_index(self._mm, self._buffer_index, self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_buckets)
-        self._buffer_index = {}
-        n_keys = len(self)
-        if n_keys > self._n_buckets*8:
-            self._data_pos, self._n_buckets = utils.reindex(self._mm, self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_buckets, n_keys)
+        n_deletes = utils.update_index(self._file, self._buffer_index, self._index_mmap, self._n_bytes_index, self._n_bytes_file, self._n_buckets, self._index_n_bytes_skip)
+        self._n_deletes += n_deletes
+        self._index_mmap.flush()
+
+        # n_keys = len(self)
+        # if n_keys > self._n_buckets*10:
+        #     self._data_pos, self._n_buckets = utils.reindex(self._mm, self._data_pos, self._n_bytes_index, self._n_bytes_file, self._n_buckets, n_keys)
 
 
 
@@ -275,77 +281,11 @@ class VariableValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 2**22):
         """
 
         """
-        fp = pathlib.Path(file_path)
-
-        if flag == "r":  # Open existing database for reading only (default)
-            write = False
-            fp_exists = True
-        elif flag == "w":  # Open existing database for reading and writing
-            write = True
-            fp_exists = True
-        elif flag == "c":  # Open database for reading and writing, creating it if it doesn't exist
-            fp_exists = fp.exists()
-            write = True
-        elif flag == "n":  # Always create a new, empty database, open for reading and writing
-            write = True
-            fp_exists = False
-        else:
-            raise ValueError("Invalid flag")
-
-        self._write = write
-        self._write_buffer_size = write_buffer_size
-        self._write_buffer_pos = 0
-        self._file_path = fp
-        n_buckets = 10007
-        # self._n_keys_pos = utils.n_keys_pos_dict['variable']
-
-        ## Load or assign encodings and attributes
-        if fp_exists:
-            if write:
-                self._file = io.open(file_path, 'r+b')
-
-                ## Locks
-                # if fcntl_import:
-                #     fcntl.flock(self._file, fcntl.LOCK_EX)
-                portalocker.lock(self._file, portalocker.LOCK_EX)
-                self._thread_lock = Lock()
-
-                ## Write buffers
-                self._mm = mmap.mmap(self._file.fileno(), 0)
-                self._write_buffer = mmap.mmap(-1, write_buffer_size)
-                self._buffer_index = []
-            else:
-                self._file = io.open(file_path, 'rb')
-                # if fcntl_import:
-                #     fcntl.flock(self._file, fcntl.LOCK_SH)
-                portalocker.lock(self._file, portalocker.LOCK_SH)
-                self._mm = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
-
-            self._finalizer = weakref.finalize(self, utils.close_file, self._mm, self._file)
-
-            ## Pull out base parameters
-            base_param_bytes = self._mm.read(utils.sub_index_init_pos)
-
-            # TODO: Run uuid and version check
-            sys_uuid = base_param_bytes[:16]
-            if sys_uuid != utils.uuid_variable_blt:
-                portalocker.lock(self._file, portalocker.LOCK_UN)
-                raise TypeError('This is not the correct file type.')
-
-            version = utils.bytes_to_int(base_param_bytes[16:18])
-            if version < utils.version:
-                raise ValueError('File is an older version.')
-
-            ## Init for existing file
-            utils.init_existing_variable_booklet(self, base_param_bytes, key_serializer, value_serializer)
-
-        else:
-            ## Init to create a new file
-            utils.init_new_variable_booklet(self, key_serializer, value_serializer, n_buckets, file_path, write_buffer_size)
+        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, write_buffer_size)
 
 
 ### Alias
