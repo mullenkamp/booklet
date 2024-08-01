@@ -149,7 +149,7 @@ The open flag follows the standard dbm options:
 
 Limitations
 -----------
-Adding keys/values above 100,000 will incur a mild slow down in insertion. For example, inserting 100,000 will take ~3 seconds, while 1,000,000 will take ~1 minute (not 30 seconds). The max viable is probably 10,000,0000 currently. 
+Adding keys/values above 100,000 will incur a mild slow down in insertion. For example, inserting 100,000 will take ~3 seconds, while 1,000,000 will take ~1 minute (not 30 seconds). The max viable is probably 10,000,000 currently. 
 
 Benchmarks
 -----------
