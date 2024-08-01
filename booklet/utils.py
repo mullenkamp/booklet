@@ -144,13 +144,6 @@ def get_bucket_index_pos(index_bucket, n_bytes_index, index_n_bytes_skip):
     return index_n_bytes_skip + (index_bucket * n_bytes_index)
 
 
-# def get_data_index_pos(n_buckets, n_bytes_index):
-#     """
-
-#     """
-#     return sub_index_init_pos + (n_buckets * n_bytes_index)
-
-
 def get_bucket_pos(index_mmap, bucket_index_pos, n_bytes_index, index_n_bytes_skip):
     """
 
@@ -171,16 +164,6 @@ def get_bucket_pos2(index_mmap, bucket_index_pos, n_bytes_index, index_n_bytes_s
     bucket_pos2 = bytes_to_int(bucket_pos2_bytes[n_bytes_index:])
 
     return index_n_bytes_skip + bucket_pos1, index_n_bytes_skip + bucket_pos2
-
-
-# def get_data_pos(index_mmap, data_index_pos, n_bytes_index):
-#     """
-
-#     """
-#     index_mmap.seek(data_index_pos)
-#     data_pos = bytes_to_int(index_mmap.read(n_bytes_index))
-
-#     return data_pos
 
 
 def get_key_hash_pos(index_mmap, key_hash, bucket_pos1, bucket_pos2, n_bytes_file):
@@ -329,65 +312,10 @@ def assign_delete_flags(index_mmap, file, key, n_buckets, n_bytes_index, n_bytes
     return True
 
 
-# def write_data_blocks(index_mmap, write_buffer, write_buffer_size, buffer_index, data_pos, key, value, n_bytes_key, n_bytes_value):
-#     """
-
-#     """
-#     wb_pos = write_buffer.tell()
-#     index_mmap.seek(0, 2)
-#     file_len = index_mmap.tell()
-
-#     key_bytes_len = len(key)
-#     key_hash = hash_key(key)
-
-#     value_bytes_len = len(value)
-
-#     write_bytes = b'\x01' + int_to_bytes(key_bytes_len, n_bytes_key) + int_to_bytes(value_bytes_len, n_bytes_value) + key + value
-
-#     write_len = len(write_bytes)
-
-#     wb_space = write_buffer_size - wb_pos
-#     if write_len > wb_space:
-#         file_len = flush_write_buffer(index_mmap, write_buffer)
-#         wb_pos = 0
-
-#     if write_len > write_buffer_size:
-#         index_mmap.resize(file_len + write_len)
-#         new_n_bytes = index_mmap.write(write_bytes)
-#         wb_pos = 0
-#     else:
-#         new_n_bytes = write_buffer.write(write_bytes)
-
-#     # if key_hash in buffer_index:
-#     #     _ = buffer_index.pop(key_hash)
-
-#     # buffer_index[key_hash] = file_len + wb_pos - data_pos + 1
-#     buffer_index.append((key_hash, file_len + wb_pos - data_pos + 1))
-
-
 def write_data_blocks(file, index_mmap, key, value, n_bytes_key, n_bytes_value, n_buckets, index_n_bytes_skip, buffer_index, write_buffer, write_buffer_size):
     """
 
     """
-    ## check if key already exists and create delete flags
-    # del_bool = False
-    # key_hash = hash_key(key)
-    # index_bucket = get_index_bucket(key_hash, n_buckets)
-    # bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_index, index_n_bytes_skip)
-    # bucket_pos1, bucket_pos2 = get_bucket_pos2(index_mmap, bucket_index_pos, n_bytes_index, index_n_bytes_skip)
-    # key_hash_pos = get_key_hash_pos(index_mmap, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
-    # if key_hash_pos:
-    #     data_block_pos = get_data_block_pos(index_mmap, key_hash_pos, n_bytes_file)
-    #     if data_block_pos:
-    #         index_mmap.seek(-n_bytes_file, 1)
-    #         index_mmap.write(int_to_bytes(0, n_bytes_file))
-
-    #         # Now assign the delete flag in the data block to 0
-    #         file.seek(data_block_pos)
-    #         file.write(b'\x00')
-
-    #         del_bool = True
-
     n_deletes = 0
 
     ## Append data block
@@ -421,42 +349,7 @@ def write_data_blocks(file, index_mmap, key, value, n_bytes_key, n_bytes_value, 
     else:
         new_n_bytes = write_buffer.write(write_bytes)
 
-    # ## Update index
-    # one_extra_index_bytes_len = key_hash_len + n_bytes_file
-    # data_pos_bytes = int_to_bytes(old_file_len, n_bytes_file)
-    # old_index_mmap_len = len(index_mmap)
-    # index_mmap.resize(old_index_mmap_len + one_extra_index_bytes_len)
-
-    # index_mmap.move(bucket_pos1 + one_extra_index_bytes_len, bucket_pos1, old_index_mmap_len - bucket_pos1)
-    # index_mmap.seek(bucket_pos1)
-    # index_mmap.write(key_hash + data_pos_bytes)
-
-    # np_bucket_index = np.frombuffer(index_mmap, count=n_buckets, offset=0, dtype=np.uint32)
-    # np_bucket_index[index_bucket+1:] += one_extra_index_bytes_len
-
     return n_deletes
-
-
-
-
-
-# def flush_write_buffer(index_mmap, write_buffer):
-#     """
-
-#     """
-#     index_mmap.seek(0, 2)
-#     file_len = index_mmap.tell()
-#     wb_pos = write_buffer.tell()
-#     if wb_pos > 0:
-#         new_size = file_len + wb_pos
-#         index_mmap.resize(new_size)
-#         write_buffer.seek(0)
-#         _ = index_mmap.write(write_buffer.read(wb_pos))
-#         write_buffer.seek(0)
-
-#         return new_size
-#     else:
-#         return file_len
 
 
 def flush_write_buffer(file, write_buffer):
@@ -686,11 +579,8 @@ def prune_file(file, index_mmap, n_buckets, n_bytes_index, n_bytes_file, n_bytes
 
             copy_file_range(file, file, bytes_left_count, end_data_block_pos, accum_n_bytes, write_buffer_size)
 
-            # index_mmap.move(accum_n_bytes, end_data_block_pos, bytes_left_count)
-
             removed_n_bytes += data_block_len
 
-    # index_mmap.resize(accum_n_bytes)
     os.ftruncate(file.fileno(), accum_n_bytes)
     os.fsync(file.fileno())
 
@@ -978,26 +868,6 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets)
 
     return init_write_bytes
 
-    ## Locks
-    # self._thread_lock = Lock()
-
-    # with self._thread_lock:
-    #     self._file = io.open(file_path, 'w+b')
-    #     portalocker.lock(self._file, portalocker.LOCK_EX)
-
-    #     _ = self._file.write(init_write_bytes + bucket_bytes)
-    #     self._file.flush()
-
-    #     self._write_buffer = mmap.mmap(-1, write_buffer_size)
-    #     self._buffer_index = []
-
-    #     self._index_mmap = mmap.mmap(self._file.fileno(), 0)
-    #     self._finalizer = weakref.finalize(self, close_file, self._index_mmap, self._file)
-
-    #     self._data_pos = len(self._index_mmap)
-
-
-
 #######################################
 ### Fixed value alternative functions
 
@@ -1095,6 +965,9 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, write_buf
     else:
         if not write:
             raise FileNotFoundError('File was requested to be opened as read-only, but no file exists.')
+
+        if value_len is None:
+            raise ValueError('value_len must be an int > 0.')
 
         self._n_buckets = 12007
 
@@ -1330,11 +1203,8 @@ def prune_file_fixed(file, index_mmap, n_buckets, n_bytes_index, n_bytes_file, n
 
             copy_file_range(file, file, bytes_left_count, end_data_block_pos, accum_n_bytes, write_buffer_size)
 
-            # index_mmap.move(accum_n_bytes, end_data_block_pos, bytes_left_count)
-
             removed_n_bytes += data_block_len
 
-    # index_mmap.resize(accum_n_bytes)
     os.ftruncate(file.fileno(), accum_n_bytes)
     os.fsync(file.fileno())
 

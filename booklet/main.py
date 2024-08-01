@@ -99,12 +99,6 @@ class Booklet(MutableMapping):
 
         # return next(counter)
 
-        # if self._write:
-        #     self._file.seek(0, 2)
-        #     data_pos = self._file.tell()
-        # else:
-        #     data_pos = self._data_end_pos
-
         len1 = (len(self._index_mmap) - self._index_n_bytes_skip - (self._n_buckets*utils.n_bytes_index))/(utils.n_bytes_file + utils.key_hash_len)
 
         return int(len1 - self._n_deletes)
@@ -318,16 +312,16 @@ class FixedValue(Booklet):
     flag : str
         Flag associated with how the file is opened according to the dbm style. See below for details.
 
-    write_buffer_size : int
-        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
-        This is only used when the file is open for writing.
-
     key_serializer : str, class, or None
         The serializer to use to convert the input value to bytes. Run the booklet.available_serializers to determine the internal serializers that are available. None will require bytes as input. A custom serializer class can also be used. If the objects can be serialized to json, then use orjson or msgpack. They are super fast and you won't have the pickle issues.
         If a custom class is passed, then it must have dumps and loads methods.
 
-    value_serializer : str, class, or None
-        Similar to the key_serializer, except for the values.
+    value_len : int
+        The number of bytes that all values will have.
+
+    write_buffer_size : int
+        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
+        This is only used when the file is open for writing.
 
     Returns
     -------
@@ -436,7 +430,7 @@ class FixedValue(Booklet):
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 5000000):
+    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 2**22):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
