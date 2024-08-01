@@ -820,7 +820,8 @@ def copy_file_range(fsrc, fdst, count, offset_src, offset_dst, write_buffer_size
     """
     Linux has magical copy abilities, but mac and windows do not.
     """
-    if hasattr(os, 'copy_file_range'):
+    # if hasattr(os, 'copy_file_range'):
+    if False:
         os.copy_file_range(fsrc.fileno(), fdst.fileno(), count, offset_src, offset_dst)
         os.fsync(fdst.fileno())
     else:
