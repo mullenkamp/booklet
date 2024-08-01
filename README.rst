@@ -6,7 +6,7 @@ Introduction
 Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. Booklet uses the `MutableMapping <https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes>`_ class API which is the same as python's dictionary in addition to some `dbm <https://docs.python.org/3/library/dbm.html>`_ methods (i.e. sync and prune).
 It is thread-safe (using thread locks on writes) and multiprocessing-safe (using file locks).
 
-Deletes do not remove data from the file directly. Similarly, reassigning a value to an existing key adds a new key/value set to the file. During normal usage, the user will not notice a difference when requesting a key/value set, but the file size will grow. If size becomes an issue because of lots of deletes or reassignments, then the user should run the "prune" method to remove old key/value sets.
+Deletes do not remove data from the file directly. Similarly, reassigning a value to an existing key adds a new key/value set to the file. During normal usage, the user will not notice a difference when requesting a key/value set, but the file size will grow. If size becomes an issue because of lots of deletes or reassignments, then the user should run the "prune" method to remove old values.
 
 When an error occurs and is caught by the module (e.g. trying to access a key that doesn't exist), booklet will properly close the file. This means it will sync any changes and "unlock" the file. There will be errors that can occur that are not caught and in these circumstances there are no guarantees for what happens to the file.
 
@@ -147,10 +147,9 @@ The open flag follows the standard dbm options:
 +---------+-------------------------------------------+
 
 
-TODO
------
-Starting in version 0.1.8, there is a prune method. It removes "deleted" keys and values from the file, but it currently leaves the old indeces in the hash table. The old indeces should generally not cause a performance issue (and definitely not a file size issue), but it would be nice to have these removed as part of the prune method one day.
-
+Limitations
+-----------
+Adding keys/values above 100,000 will incur a mild slow down in insertion. For example, inserting 100,000 will take ~3 seconds, while 1,000,000 will take ~1 minute (not 30 seconds). The max viable is probably 10,000,0000 currently. 
 
 Benchmarks
 -----------

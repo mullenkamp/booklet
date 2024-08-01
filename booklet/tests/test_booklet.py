@@ -7,10 +7,12 @@ Created on Sun Mar 10 13:55:17 2024
 """
 import pytest
 import io
+import os
 from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
+import mmap
 
 ##############################################
 ### Parameters
@@ -35,7 +37,7 @@ print(__version__)
 tf = NamedTemporaryFile()
 file_path = tf.name
 
-data_dict = {key: list(range(key)) for key in range(2, 30)}
+data_dict = {key: key*2 for key in range(2, 30)}
 
 
 def test_set_items():
@@ -46,7 +48,7 @@ def test_set_items():
     with VariableValue(file_path) as f:
         value = f[10]
 
-    assert value == list(range(10))
+    assert value == data_dict[10]
 
 
 def test_update():
@@ -56,7 +58,7 @@ def test_update():
     with VariableValue(file_path) as f:
         value = f[10]
 
-    assert value == list(range(10))
+    assert value == data_dict[10]
 
 
 def test_threading_writes():
@@ -72,7 +74,7 @@ def test_threading_writes():
     with VariableValue(file_path) as f:
         value = f[10]
 
-    assert value == list(range(10))
+    assert value == data_dict[10]
 
 
 def test_keys():
@@ -146,7 +148,9 @@ def test_values():
 
 def test_prune():
     with VariableValue(file_path, 'w') as f:
-        f.prune()
+        recovered_space = f.prune()
+
+    assert recovered_space > 0
 
     with VariableValue(file_path) as f:
         for key, source_value in data_dict.items():
@@ -168,7 +172,7 @@ def test_set_items_get_items():
         assert value == [0, 0]
 
         value = f[11]
-        assert value == list(range(11))
+        assert value == data_dict[11]
 
 
 def test_reindex():
@@ -176,15 +180,20 @@ def test_reindex():
 
     """
     with VariableValue(file_path, 'w') as f:
-        for i in range(90000):
-            f[51+i] = i
+        old_n_buckets = f._n_buckets
+        for i in range(old_n_buckets*11):
+            f[21+i] = i
 
         f.sync()
+        value = f[21]
 
-        n_buckets = f._n_buckets
-        value = f[51]
+    assert value == 0
 
-    assert (n_buckets > 20000) and (value == 0)
+    with VariableValue(file_path) as f:
+        new_n_buckets = f._n_buckets
+        value = f[21]
+
+    assert (new_n_buckets > 20000) and (value == 0)
 
 
 ## Always make this last!!!
@@ -252,7 +261,6 @@ def test_keys_fixed():
     with FixedValue(file_path) as f:
         for key in keys:
             val = f[key]
-
 
 
 def test_items_fixed():
@@ -345,15 +353,20 @@ def test_reindex_fixed():
     """
     b1 = blake2s(b'0', digest_size=13).digest()
     with FixedValue(file_path, 'w') as f:
-        for i in range(90000):
-            f[51+i] = b1
+        old_n_buckets = f._n_buckets
+        for i in range(old_n_buckets*11):
+            f[21+i] = b1
 
         f.sync()
+        value = f[21]
 
-        n_buckets = f._n_buckets
-        value = f[51]
+    assert value == b1
 
-    assert (n_buckets > 20000) and (value == b1)
+    with FixedValue(file_path) as f:
+        new_n_buckets = f._n_buckets
+        value = f[21]
+
+    assert (new_n_buckets > 20000) and (value == b1)
 
 
 ## Always make this last!!!
@@ -409,18 +422,126 @@ def test_clear_fixed():
 # if not f._mm.closed:
 #     print('oops')
 
-# n = 100000
+
+# file_path = '/home/mike/data/cache/test1.blt'
+
+# chunk_size = 1000
+# b2 = b'0' * chunk_size
+# n = 1000000
 
 # def make_test_file(n):
 #     with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
 #         for i in range(n):
-#             f[i] = i
+#             f[i] = b2
 
 
 # def test_index_speed(n):
 #     with VariableValue(file_path, 'r') as f:
 #         for i in range(n):
 #             val = f[i]
+
+
+# def test_resize1():
+#     f = io.open(file_path, 'w+b')
+#     f.write(b'0')
+#     f.flush()
+
+#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+#     f.close()
+
+#     fm.resize(256**5)
+
+#     for i in range(n):
+#         start = i * chunk_size
+#         end = start + chunk_size
+#         # fm.resize(end)
+#         fm[start:end] = b2
+
+#     fm.resize(chunk_size*n)
+
+#     fm.close()
+
+
+# def test_resize2():
+#     f = io.open(file_path, 'w+b')
+#     f.write(b'0')
+#     f.flush()
+
+#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+#     f.close()
+
+#     # fm.resize(256**5)
+
+#     for i in range(n):
+#         start = i * chunk_size
+#         end = start + chunk_size
+#         fm.resize(end)
+#         fm[start:end] = b2
+#         # fm.flush()
+
+#     # fm.resize(chunk_size*n)
+
+#     fm.close()
+
+
+# def test_write1():
+#     f = io.open(file_path, 'w+b')
+#     for i in range(n):
+#         # start = i * chunk_size
+#         # end = start + chunk_size
+#         f.write(b2)
+
+#     f.close()
+
+
+# def test_write2():
+#     f = io.open(file_path, 'w+b')
+#     f.write(b'0')
+#     f.flush()
+
+#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+#     f.close()
+
+#     for i in range(n):
+#         fm.resize((i+1) * chunk_size)
+#         fm.write(b2)
+
+#     fm.close()
+
+
+# def test_write3():
+#     f = io.open(file_path, 'w+b')
+#     f.write(b'0')
+#     f.flush()
+
+#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+#     # f.close()
+
+#     for i in range(n):
+#         f.write(b2)
+#         f.flush()
+#         fm.resize((i+1) * chunk_size)
+
+#     f.close()
+#     fm.close()
+
+
+
+# f = io.open(file_path, 'w+b')
+# f.write(b'0123456789')
+# f.flush()
+
+# f.seek(1000000001)
+# f.write(b'1234')
+
+# fd = f.fileno()
+# os.copy_file_range(fd, fd, 1000000000, 1000000000, 0)
+
+# f.seek(0)
+
+# f.read(10)
+
+
 
 
 
