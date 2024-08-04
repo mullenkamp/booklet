@@ -13,6 +13,7 @@ from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
 import mmap
+from time import time
 
 ##############################################
 ### Parameters
@@ -423,24 +424,26 @@ def test_clear_fixed():
 #     print('oops')
 
 
-# file_path = '/home/mike/data/cache/test1.blt'
+file_path = '/home/mike/data/cache/test1.blt'
 
-# chunk_size = 1000
-# b2 = b'0' * chunk_size
-# n = 1000000
+chunk_size = 1000
+b2 = b'0' * chunk_size
+n = 1000000
 
-# def make_test_file(n):
-#     with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
-#         for i in range(n):
-#             f[i] = b2
-
-
-# def test_index_speed(n):
-#     with VariableValue(file_path, 'r') as f:
-#         for i in range(n):
-#             val = f[i]
+def make_test_file(n):
+    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+        for i in range(n):
+            f[i] = b2
 
 
+def test_index_speed(n):
+    with VariableValue(file_path, 'r') as f:
+        for i in range(n):
+            val = f[i]
+
+t1 = time()
+make_test_file(n)
+print(time() - t1)
 # def test_resize1():
 #     f = io.open(file_path, 'w+b')
 #     f.write(b'0')
@@ -530,7 +533,7 @@ def test_clear_fixed():
 # f = io.open(file_path, 'w+b')
 # f.write(b'0123456789')
 # f.flush()
-
+# fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
 # f.seek(1000000001)
 # f.write(b'1234')
 
