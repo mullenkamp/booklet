@@ -46,7 +46,7 @@ Write data using the context manager
 
   import booklet
 
-  with booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str') as db:
+  with booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str', n_buckets=12007) as db:
     db['test_key'] = ['one', 2, 'three', 4]
 
 
@@ -149,9 +149,9 @@ The open flag follows the standard dbm options:
 
 Limitations
 -----------
-Adding keys/values above 100,000 will incur a mild slow down in insertion. For example, inserting 100,000 will take ~3 seconds, while 1,000,000 will take ~1 minute (not 30 seconds). The max viable is probably 10,000,000 currently. 
+The only current limitation is that the user should assign an appropriate n_buckets. This should be approximately the same number as the expected number of keys/values. The default is set at 12007. An automatic re-indexing should come eventually.
 
 Benchmarks
 -----------
 From my initial tests, the performance is comparable to other very fast key-value databases (e.g. gdbm, lmdb).
-Proper benchmarks will be coming soon...
+
