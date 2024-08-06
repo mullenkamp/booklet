@@ -424,29 +424,29 @@ def test_clear_fixed():
 #     print('oops')
 
 
-file_path = '/home/mike/data/cache/test1.blt'
+# file_path = '/home/mike/data/cache/test1.blt'
 
-n_buckets = 12007
-n_buckets = 1728017
-chunk_size = 1000
-b2 = b'0' * chunk_size
-n = 100000
+# n_buckets = 12007
+# n_buckets = 1728017
+# chunk_size = 1000
+# b2 = b'0' * chunk_size
+# n = 100000
 
-def make_test_file(n):
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
-        for i in range(n):
-            f[i] = b2
+# def make_test_file(n):
+#     with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
+#         for i in range(n):
+#             f[i] = b2
 
 
-def test_index_speed1(n):
-    with VariableValue(file_path, 'r') as f:
-        for i in range(n):
-            val = f[i]
+# def test_index_speed1(n):
+#     with VariableValue(file_path, 'r') as f:
+#         for i in range(n):
+#             val = f[i]
 
-def test_index_speed2(n):
-    with VariableValue(file_path, 'r') as f:
-        for k, v in f.items():
-            pass
+# def test_index_speed2(n):
+#     with VariableValue(file_path, 'r') as f:
+#         for k, v in f.items():
+#             pass
 
 
 # t1 = time()
