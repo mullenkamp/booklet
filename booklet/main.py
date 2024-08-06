@@ -10,9 +10,9 @@ import pathlib
 from collections.abc import MutableMapping
 from typing import Union
 # from threading import Lock
-# import portalocker
-# from itertools import count
-# from collections import Counter, defaultdict, deque
+import portalocker
+from itertools import count
+from collections import Counter, defaultdict, deque
 # import weakref
 # from multiprocessing import Manager, shared_memory
 
@@ -199,7 +199,9 @@ class Booklet(MutableMapping):
 
     def close(self):
         self.sync()
-        self._finalizer()
+        portalocker.lock(self._file, portalocker.LOCK_UN)
+        self._file.close()
+        self._finalizer.detach()
 
     # def __del__(self):
     #     self.close()

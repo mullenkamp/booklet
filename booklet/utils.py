@@ -15,6 +15,8 @@ from threading import Lock
 import portalocker
 # from fcntl import flock, LOCK_EX, LOCK_SH, LOCK_UN
 # import mmap
+from itertools import count
+from collections import Counter, defaultdict, deque
 import weakref
 import pathlib
 # from time import time
@@ -80,21 +82,17 @@ n_buckets_reindex = {
 ### Functions
 
 
-def close_files(file, write):
+def close_files(file, n_keys, n_keys_pos, write):
     """
     This is to be run as a finalizer to ensure that the files are closed properly.
     First will be to just close the files, I'll need to modify it to sync the index once I write the sync function.
     """
-    # if write:
-    #     # file.seek(n_keys_pos)
-    #     # file.write(int_to_bytes(n_keys, 4))
-    #     file_mmap.flush()
-    #     file.flush()
+    if write:
+        file.seek(n_keys_pos)
+        file.write(int_to_bytes(n_keys, 4))
+        # file_mmap.flush()
+        # file.flush()
 
-    # if platform.startswith('linux'):
-    #     flock(fd, LOCK_UN)
-    # file.madvise(mmap.MADV_DONTNEED)
-    # file_mmap.close()
     portalocker.lock(file, portalocker.LOCK_UN)
     file.close()
 
@@ -749,13 +747,6 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         if version < version:
             raise ValueError('File is an older version.')
 
-        ## Check the data end pos
-        self._n_keys_pos = n_keys_pos
-        self._n_keys = bytes_to_int(base_param_bytes[n_keys_pos:n_keys_pos+4])
-
-        # if self._n_keys == 0:
-        #     raise ValueError('File must have been closed incorrectly.')
-
         # TODO : Create a process that will recreate the index if the data end pos is < 200. This can be done by rolling over the data blocks and iteratively writing the indexes.
         # At the moment, I'll just have it fail.
         # if self._data_end_pos < sub_index_init_pos:
@@ -764,6 +755,17 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
         ## Read the rest of the base parameters
         read_base_params_variable(self, base_param_bytes, key_serializer, value_serializer)
+
+        ## Check the n_keys
+        if self._n_keys == (256**4) - 1:
+            if write:
+                print('File must have been closed incorrectly...rebuilding the n_keys...')
+                counter = count()
+                deque(zip(self.keys(), counter), maxlen=0)
+    
+                self._n_keys = next(counter)
+            else:
+                raise ValueError('File must have been closed incorrectly. Please open with write access to fix it.')
 
     else:
         if not write:
@@ -800,7 +802,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             # self._file_mmap.resize(sub_index_init_pos + (self._n_buckets * n_bytes_file))
 
     ## Create finalizer
-    self._finalizer = weakref.finalize(self, close_files, self._file, self._write)
+    self._finalizer = weakref.finalize(self, close_files, self._file, (256**4) - 1, self._n_keys_pos, self._write)
 
 
 def copy_file_range(fsrc, fdst, count, offset_src, offset_dst, write_buffer_size):
@@ -872,8 +874,10 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
     # self._n_bytes_index = bytes_to_int(base_param_bytes[25:29])
     saved_value_serializer = bytes_to_int(base_param_bytes[29:31])
     saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
-    # self._n_deletes = bytes_to_int(base_param_bytes[33:37])
+    self._n_keys = bytes_to_int(base_param_bytes[33:37])
     # self._value_len = bytes_to_int(base_param_bytes[37:41])
+
+    self._n_keys_pos = n_keys_pos
 
     ## Pull out the serializers
     if saved_value_serializer > 0:
@@ -1023,18 +1027,19 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         if version < version:
             raise ValueError('File is an older version.')
 
-        ## Check the data end pos
-        self._n_keys_pos = n_keys_pos
-        self._n_keys = bytes_to_int(base_param_bytes[n_keys_pos:n_keys_pos+4])
-
-        # TODO : Create a process that will recreate the index if the data end pos is < 200. This can be done by rolling over the data blocks and iteratively writing the indexes.
-        # At the moment, I'll just have it fail.
-        # if self._data_end_pos < sub_index_init_pos:
-        #     portalocker.lock(self._file, portalocker.LOCK_UN)
-        #     raise FileExistsError('File has a corrupted index and will need to be rebuilt.')
-
         ## Read the rest of the base parameters
         read_base_params_fixed(self, base_param_bytes, key_serializer)
+
+        ## Check the n_keys
+        if self._n_keys == (256**4) - 1:
+            if write:
+                # print('File must have been closed incorrectly...rebuilding the n_keys...')
+                counter = count()
+                deque(zip(self.keys(), counter), maxlen=0)
+    
+                self._n_keys = next(counter)
+            else:
+                raise ValueError('File must have been closed incorrectly. Please open with write access to fix it.')
 
 
     else:
@@ -1070,7 +1075,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
             write_init_bucket_indexes(self._file, self._n_buckets, sub_index_init_pos, write_buffer_size)
 
     ## Create finalizer
-    self._finalizer = weakref.finalize(self, close_files, self._file, self._write)
+    self._finalizer = weakref.finalize(self, close_files, self._file, (256**4) - 1, self._n_keys_pos, self._write)
 
 
 def read_base_params_fixed(self, base_param_bytes, key_serializer):
@@ -1086,6 +1091,8 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
     saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
     self._n_keys = bytes_to_int(base_param_bytes[33:37])
     self._value_len = bytes_to_int(base_param_bytes[37:41])
+
+    self._n_keys_pos = n_keys_pos
 
     ## Pull out the serializers
     self._value_serializer = serializers.Bytes
