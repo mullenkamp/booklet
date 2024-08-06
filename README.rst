@@ -6,9 +6,9 @@ Introduction
 Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. Booklet uses the `MutableMapping <https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes>`_ class API which is the same as python's dictionary in addition to some `dbm <https://docs.python.org/3/library/dbm.html>`_ methods (i.e. sync and prune).
 It is thread-safe (using thread locks on writes) and multiprocessing-safe (using file locks).
 
-Deletes do not remove data from the file directly. Similarly, reassigning a value to an existing key adds a new key/value set to the file. During normal usage, the user will not notice a difference when requesting a key/value set, but the file size will grow. If size becomes an issue because of lots of deletes or reassignments, then the user should run the "prune" method to remove old values.
+Deletes do not remove data from the file directly. Similarly, reassigning a value to an existing key adds a new key/value set to the file. During normal usage, the user will not notice a difference when requesting a key/value set, but the file size will grow. If size becomes an issue because of lots of deletes or reassignments, then the user should create a new file by iterating through the original.
 
-When an error occurs and is caught by the module (e.g. trying to access a key that doesn't exist), booklet will properly close the file. This means it will sync any changes and "unlock" the file. There will be errors that can occur that are not caught and in these circumstances there are no guarantees for what happens to the file.
+When an error occurs and is caught by the module (e.g. trying to access a key that doesn't exist), booklet will properly close the file and remove the file locks. This will not sync any changes, so the user will lose any changes that were not synced. There will be errors that can occur that are not caught and in these circumstances there are no guarantees for what happens to the file.
 
 Installation
 ------------
@@ -67,7 +67,7 @@ Write data without using the context manager
 
   import booklet
 
-  db = booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str')
+  db = booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str', n_buckets=12007)
 
   db['test_key'] = ['one', 2, 'three', 4]
   db['2nd_test_key'] = ['five', 6, 'seven', 8]
@@ -104,7 +104,7 @@ Custom serializers
     db['test_key'] = ['one', 2, 'three', 4]
 
 
-The Orjson class is actually already built into the package. You can pass the string 'orjson' to either serializer parameters to use the above serializer. This is just an example of a serializer.
+The Orjson class is actually already built into the package. You can pass the string 'orjson' to either serializer parameters to use the above serializer. This is just an example of a custom serializer.
 
 Here's another example with compression.
 
