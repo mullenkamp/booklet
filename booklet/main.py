@@ -23,8 +23,8 @@ from typing import Union
 #     fcntl_import = False
 
 
-import utils
-# from . import utils
+# import utils
+from . import utils
 
 # import serializers
 # from . import serializers
@@ -126,7 +126,7 @@ class Booklet(MutableMapping):
         if self._write:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets)
+                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size)
                     self._n_keys += n_extra_keys
 
         else:
@@ -158,7 +158,7 @@ class Booklet(MutableMapping):
     def __setitem__(self, key, value):
         if self._write:
             with self._thread_lock:
-                n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets)
+                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size)
                 self._n_keys += n_extra_keys
 
         else:
@@ -191,13 +191,14 @@ class Booklet(MutableMapping):
     def clear(self):
         if self._write:
             with self._thread_lock:
-                utils.clear(self._file, self._index_mmap, self._n_buckets, self._n_bytes_index, self._n_deletes_pos)
-                self._n_deletes = 0
+                utils.clear(self._file, self._n_buckets, self._n_keys_pos, self._write_buffer_size)
+                self._n_keys = 0
 
         else:
             raise ValueError('File is open for read only.')
 
     def close(self):
+        self.sync()
         self._finalizer()
 
     # def __del__(self):
@@ -208,15 +209,17 @@ class Booklet(MutableMapping):
     def sync(self):
         if self._write:
             with self._thread_lock:
-                # if self._buffer_index:
-                #     utils.flush_write_buffer(self._file, self._write_buffer)
-                # self._sync_index()
+                if self._buffer_index:
+                    utils.flush_data_buffer(self._file, self._buffer_data)
+                self._sync_index()
+                self._file.seek(self._n_keys_pos)
+                self._file.write(utils.int_to_bytes(self._n_keys, 4))
                 self._file.flush()
 
-    # def _sync_index(self):
-    #     n_deletes = utils.update_index(self._file, self._buffer_index, self._index_mmap, self._n_bytes_index, self._n_bytes_file, self._n_buckets, self._index_n_bytes_skip)
-    #     self._n_deletes += n_deletes
-    #     self._index_mmap.flush()
+    def _sync_index(self):
+        n_extra_keys = utils.update_index(self._file, self._buffer_index, self._n_buckets)
+        self._n_keys += n_extra_keys
+        # self._index_mmap.flush()
 
         # n_keys = len(self)
         # if n_keys > self._n_buckets*10:
@@ -251,16 +254,19 @@ class VariableValue(Booklet):
     flag : str
         Flag associated with how the file is opened according to the dbm style. See below for details.
 
-    write_buffer_size : int
-        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
-        This is only used when the file is open for writing.
-
     key_serializer : str, class, or None
         The serializer to use to convert the input value to bytes. Run the booklet.available_serializers to determine the internal serializers that are available. None will require bytes as input. A custom serializer class can also be used. If the objects can be serialized to json, then use orjson or msgpack. They are super fast and you won't have the pickle issues.
         If a custom class is passed, then it must have dumps and loads methods.
 
     value_serializer : str, class, or None
         Similar to the key_serializer, except for the values.
+
+    n_buckets : int
+        The number of hash buckets to using in the indexing. Generally use the same number of buckets as you expect for the total number of keys.
+
+    write_buffer_size : int
+        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
+        This is only used when the file is open for writing.
 
     Returns
     -------
@@ -346,27 +352,27 @@ class FixedValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_len: int=None, write_buffer_size: int = 2**22):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, write_buffer_size: int = 2**22):
         """
 
         """
-        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, write_buffer_size)
+        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, write_buffer_size)
 
 
     def keys(self):
-        for key in utils.iter_keys_values_fixed(self._file, self._data_end_pos, self._write, self._n_buckets, True, False, self._n_bytes_key, self._value_len):
+        for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len):
             yield self._post_key(key)
 
     def items(self):
-        for key, value in utils.iter_keys_values_fixed(self._file, self._data_end_pos, self._write, self._n_buckets, True, True, self._n_bytes_key, self._value_len):
+        for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len):
             yield self._post_key(key), self._post_value(value)
 
     def values(self):
-        for value in utils.iter_keys_values_fixed(self._file, self._data_end_pos, self._write, self._n_buckets, False, True, self._n_bytes_key, self._value_len):
+        for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len):
             yield self._post_value(value)
 
     def get(self, key, default=None):
-        value = utils.get_value_fixed(self._index_mmap, self._file, self._pre_key(key), self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._index_n_bytes_skip)
+        value = utils.get_value_fixed(self._file, self._pre_key(key), self._n_buckets, self._value_len)
 
         if not value:
             return default
@@ -383,28 +389,28 @@ class FixedValue(Booklet):
         if self._write:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_deletes = utils.write_data_blocks_fixed(self._file, self._index_mmap, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_buckets, self._index_n_bytes_skip, self._buffer_index, self._write_buffer, self._write_buffer_size)
-                    self._n_deletes += n_deletes
+                    n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size)
+                    self._n_keys += n_extra_keys
 
         else:
             raise ValueError('File is open for read only.')
 
 
-    def prune(self):
-        """
-        Prunes the old keys and associated values. Returns the recovered space in bytes.
-        """
-        if self._write:
-            with self._thread_lock:
-                recovered_space = utils.prune_file_fixed(self._file, self._index_mmap, self._n_buckets, self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._index_n_bytes_skip)
-        else:
-            raise ValueError('File is open for read only.')
+    # def prune(self):
+    #     """
+    #     Prunes the old keys and associated values. Returns the recovered space in bytes.
+    #     """
+    #     if self._write:
+    #         with self._thread_lock:
+    #             recovered_space = utils.prune_file_fixed(self._file, self._index_mmap, self._n_buckets, self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._index_n_bytes_skip)
+    #     else:
+    #         raise ValueError('File is open for read only.')
 
-        return recovered_space
+    #     return recovered_space
 
 
     def __getitem__(self, key):
-        value = utils.get_value_fixed(self._index_mmap, self._file, self._pre_key(key), self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._value_len, self._n_buckets, self._index_n_bytes_skip)
+        value = utils.get_value_fixed(self._file, self._pre_key(key), self._n_buckets, self._value_len)
 
         if not value:
             raise KeyError(key)
@@ -415,8 +421,8 @@ class FixedValue(Booklet):
     def __setitem__(self, key, value):
         if self._write:
             with self._thread_lock:
-                n_deletes = utils.write_data_blocks_fixed(self._file, self._index_mmap, self._pre_key(key), self._pre_value(value), self._n_bytes_key, self._n_buckets, self._index_n_bytes_skip, self._buffer_index, self._write_buffer, self._write_buffer_size)
-                self._n_deletes += n_deletes
+                n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size)
+                self._n_keys += n_extra_keys
 
         else:
             raise ValueError('File is open for read only.')
@@ -430,7 +436,7 @@ class FixedValue(Booklet):
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, write_buffer_size: int = 2**22):
+    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, write_buffer_size: int = 2**22):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -442,16 +448,19 @@ def open(
     flag : str
         Flag associated with how the file is opened according to the dbm style. See below for details.
 
-    write_buffer_size : int
-        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
-        This is only used when the file is open for writing.
-
     key_serializer : str, class, or None
         The serializer to use to convert the input value to bytes. Run the booklet.available_serializers to determine the internal serializers that are available. None will require bytes as input. A custom serializer class can also be used. If the objects can be serialized to json, then use orjson or msgpack. They are super fast and you won't have the pickle issues.
         If a custom class is passed, then it must have dumps and loads methods.
 
     value_serializer : str, class, or None
         Similar to the key_serializer, except for the values.
+
+    n_buckets : int
+        The number of hash buckets to using in the indexing. Generally use the same number of buckets as you expect for the total number of keys.
+
+    write_buffer_size : int
+        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
+        This is only used when the file is open for writing.
 
     Returns
     -------
@@ -476,4 +485,4 @@ def open(
     +---------+-------------------------------------------+
 
     """
-    return VariableValue(file_path, flag, key_serializer, value_serializer, write_buffer_size)
+    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size)
