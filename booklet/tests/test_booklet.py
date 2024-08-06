@@ -504,37 +504,37 @@ def test_clear_fixed():
 #     fm.close()
 
 
-def test_write1():
-    f = io.open(file_path, 'w+b')
-    for i in range(n):
-        # start = i * chunk_size
-        # end = start + chunk_size
-        f.write(b2)
+# def test_write1():
+#     f = io.open(file_path, 'w+b')
+#     for i in range(n):
+#         # start = i * chunk_size
+#         # end = start + chunk_size
+#         f.write(b2)
 
-    f.close()
+#     f.close()
 
 
-def test_write2():
-    f = io.open(file_path, 'w+b')
-    f.write(b'0')
-    f.flush()
+# def test_write2():
+#     f = io.open(file_path, 'w+b')
+#     f.write(b'0')
+#     f.flush()
 
-    fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
-    f.close()
+#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+#     f.close()
 
-    fm.madvise(mmap.MADV_SEQUENTIAL)
+#     fm.madvise(mmap.MADV_SEQUENTIAL)
 
-    max_mem = 2**22
-    mem = 0
-    for i in range(n):
-        fm.resize((i+1) * chunk_size)
-        mem += fm.write(b2)
-        if mem > max_mem:
-            fm.madvise(mmap.MADV_DONTNEED)
-            mem = 0
+#     max_mem = 2**22
+#     mem = 0
+#     for i in range(n):
+#         fm.resize((i+1) * chunk_size)
+#         mem += fm.write(b2)
+#         if mem > max_mem:
+#             fm.madvise(mmap.MADV_DONTNEED)
+#             mem = 0
 
-    fm.flush()
-    fm.close()
+#     fm.flush()
+#     fm.close()
 
 
 # t1 = time()
@@ -542,68 +542,68 @@ def test_write2():
 # print(time() - t1)
 
 
-def test_write3():
-    f = io.open(file_path, 'w+b')
-    f.write(b'0')
-    f.flush()
+# def test_write3():
+#     f = io.open(file_path, 'w+b')
+#     f.write(b'0')
+#     f.flush()
 
-    fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
-    # f.close()
+#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
+#     # f.close()
 
-    max_mem = 2**22
-    mem = 0
-    for i in range(n):
-        mem += f.write(b2)
-        if mem > max_mem:
-            f.flush()
-            old_len = len(fm)
-            fm.resize(old_len + mem)
-            mem = 0
+#     max_mem = 2**22
+#     mem = 0
+#     for i in range(n):
+#         mem += f.write(b2)
+#         if mem > max_mem:
+#             f.flush()
+#             old_len = len(fm)
+#             fm.resize(old_len + mem)
+#             mem = 0
 
-    f.close()
-    fm.close()
-
-
-def test_read1():
-    f = io.open(file_path, 'rb')
-    fm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-    fm.madvise(mmap.MADV_SEQUENTIAL)
-
-    max_mem = 2**22
-    mem = 0
-    for i in range(n):
-        data = fm.read(chunk_size)
-        mem += len(data)
-        if mem > max_mem:
-            fm.madvise(mmap.MADV_DONTNEED)
-            mem = 0
-
-    fm.close()
-    f.close()
+#     f.close()
+#     fm.close()
 
 
-def test_read2():
-    f = io.open(file_path, 'rb')
-    fm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-    fm.madvise(mmap.MADV_SEQUENTIAL)
+# def test_read1():
+#     f = io.open(file_path, 'rb')
+#     fm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+#     fm.madvise(mmap.MADV_SEQUENTIAL)
 
-    max_mem = 2**22
-    mem = 0
-    for i in range(n):
-        data = fm.read(chunk_size)
-        # mem += len(data)
+#     max_mem = 2**22
+#     mem = 0
+#     for i in range(n):
+#         data = fm.read(chunk_size)
+#         mem += len(data)
+#         if mem > max_mem:
+#             fm.madvise(mmap.MADV_DONTNEED)
+#             mem = 0
 
-    fm.madvise(mmap.MADV_DONTNEED)
-    fm.close()
-    f.close()
+#     fm.close()
+#     f.close()
 
 
-def test_read3():
-    f = io.open(file_path, 'rb')
-    for i in range(n):
-        data = f.read(chunk_size)
+# def test_read2():
+#     f = io.open(file_path, 'rb')
+#     fm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+#     fm.madvise(mmap.MADV_SEQUENTIAL)
 
-    f.close()
+#     max_mem = 2**22
+#     mem = 0
+#     for i in range(n):
+#         data = fm.read(chunk_size)
+#         # mem += len(data)
+
+#     fm.madvise(mmap.MADV_DONTNEED)
+#     fm.close()
+#     f.close()
+
+
+# def test_read3():
+#     f = io.open(file_path, 'rb')
+#     for i in range(n):
+#         data = f.read(chunk_size)
+
+#     f.close()
 
 
 
