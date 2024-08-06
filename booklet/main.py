@@ -266,7 +266,7 @@ class VariableValue(Booklet):
     n_buckets : int
         The number of hash buckets to using in the indexing. Generally use the same number of buckets as you expect for the total number of keys.
 
-    write_buffer_size : int
+    buffer_size : int
         The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
         This is only used when the file is open for writing.
 
@@ -293,11 +293,11 @@ class VariableValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, write_buffer_size: int = 2**22):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22):
         """
 
         """
-        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size)
+        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size)
 
 
 ### Alias
@@ -327,7 +327,7 @@ class FixedValue(Booklet):
     value_len : int
         The number of bytes that all values will have.
 
-    write_buffer_size : int
+    buffer_size : int
         The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
         This is only used when the file is open for writing.
 
@@ -354,11 +354,11 @@ class FixedValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, write_buffer_size: int = 2**22):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, buffer_size: int = 2**22):
         """
 
         """
-        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, write_buffer_size)
+        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size)
 
 
     def keys(self):
@@ -438,7 +438,7 @@ class FixedValue(Booklet):
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, write_buffer_size: int = 2**22):
+    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -460,7 +460,7 @@ def open(
     n_buckets : int
         The number of hash buckets to using in the indexing. Generally use the same number of buckets as you expect for the total number of keys.
 
-    write_buffer_size : int
+    buffer_size : int
         The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
         This is only used when the file is open for writing.
 
@@ -487,4 +487,4 @@ def open(
     +---------+-------------------------------------------+
 
     """
-    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size)
+    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size)
