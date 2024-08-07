@@ -21,8 +21,8 @@ import weakref
 import pathlib
 # from time import time
 
-# import serializers
-from . import serializers
+import serializers
+# from . import serializers
 
 ############################################
 ### Parameters
@@ -182,52 +182,6 @@ def get_last_data_block_pos(file_mmap, key_hash, first_data_block_pos):
             return 0
 
         data_block_pos = next_data_block_pos
-
-
-
-
-
-# def get_bucket_pos2(index_mmap, bucket_index_pos, n_bytes_index, index_n_bytes_skip):
-#     """
-
-#     """
-#     index_mmap.seek(bucket_index_pos)
-#     bucket_pos2_bytes = index_mmap.read(n_bytes_index*2)
-#     bucket_pos1 = bytes_to_int(bucket_pos2_bytes[:n_bytes_index])
-#     bucket_pos2 = bytes_to_int(bucket_pos2_bytes[n_bytes_index:])
-
-#     return index_n_bytes_skip + bucket_pos1, index_n_bytes_skip + bucket_pos2
-
-
-# def get_key_hash_pos(index_mmap, key_hash, bucket_pos1, bucket_pos2, n_bytes_file):
-#     """
-
-#     """
-#     key_hash_pos = index_mmap.find(key_hash, bucket_pos1, bucket_pos2)
-
-#     if key_hash_pos == -1:
-#         return False
-
-#     bucket_block_len = key_hash_len + n_bytes_file
-#     while (key_hash_pos - bucket_pos1) % bucket_block_len > 0:
-#         key_hash_pos = index_mmap.find(key_hash, key_hash_pos, bucket_pos2)
-#         if key_hash_pos == -1:
-#             return False
-
-#     return key_hash_pos
-
-
-# def get_data_block_pos(index_mmap, key_hash_pos, n_bytes_file):
-#     """
-#     The data block relative position of 0 is a delete/ignore flag, so all data block relative positions have been shifted forward by 1.
-#     """
-#     index_mmap.seek(key_hash_pos + key_hash_len)
-#     data_block_rel_pos = bytes_to_int(index_mmap.read(n_bytes_file))
-
-#     if data_block_rel_pos == 0:
-#         return False
-
-#     return data_block_rel_pos
 
 
 def contains_key(file_mmap, key_hash, n_buckets):
@@ -448,7 +402,7 @@ def update_index(file_mmap, buffer_index, n_buckets):
                     file_mmap.write(new_data_block_pos)
                     n_keys += 1
                     break
-    
+
                 previous_data_index_pos = data_block_pos + key_hash_len
                 data_block_pos = next_data_block_pos
         else:
@@ -476,82 +430,6 @@ def clear(file, n_buckets, n_keys_pos, write_buffer_size):
     ## Cut back the file to the bucket index
     write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
     file.flush()
-
-
-
-
-# def update_index(file, buffer_index, index_mmap, n_bytes_index, n_bytes_file, n_buckets, index_n_bytes_skip):
-#     """
-
-#     """
-#     ## Iterate through the write buffer index to determine which indexes already exist and which ones need to be added
-#     ## Also update the bucket index along the way for the new indexes
-
-#     buffer_len = len(buffer_index)
-
-#     if buffer_len == 0:
-#         return 0
-
-#     # Get old mmap length and resize to new length
-#     old_index_mmap_len = len(index_mmap)
-#     index_mmap.resize(old_index_mmap_len + buffer_len)
-
-#     # Determine the number of new indexes to process
-#     one_extra_index_bytes_len = key_hash_len + n_bytes_file
-#     n_new_indexes = int(buffer_len/one_extra_index_bytes_len)
-
-#     # t1 = time()
-
-#     # Get the bucket indexes and convert to numpy for easy math operations
-#     # n_bytes_index must be 4 for numpy to work...
-#     np_bucket_index = np.frombuffer(index_mmap, offset=0, count=n_buckets, dtype=np.uint32)
-
-#     # Roll through all the new indexes and update the primary index
-#     n_deletes = 0
-#     for i in range(n_new_indexes):
-#         start_pos = i * one_extra_index_bytes_len
-#         end_pos = start_pos + one_extra_index_bytes_len
-#         bucket_index1 = buffer_index[start_pos:end_pos]
-#         key_hash = bucket_index1[:key_hash_len]
-
-#         # Check if key already exists
-#         index_bucket = get_index_bucket(key_hash, n_buckets)
-#         bucket_index_pos = get_bucket_index_pos(index_bucket, n_bytes_index, index_n_bytes_skip)
-#         bucket_pos1, bucket_pos2 = get_bucket_pos2(index_mmap, bucket_index_pos, n_bytes_index, index_n_bytes_skip)
-#         key_hash_pos = get_key_hash_pos(index_mmap, key_hash, bucket_pos1, bucket_pos2, n_bytes_file)
-#         if key_hash_pos:
-#             data_block_pos = get_data_block_pos(index_mmap, key_hash_pos, n_bytes_file)
-#             if data_block_pos:
-#                 index_mmap.seek(-n_bytes_file, 1)
-#                 index_mmap.write(int_to_bytes(0, n_bytes_file))
-
-#                 # Now assign the delete flag in the data block to 0
-#                 file.seek(data_block_pos)
-#                 file.write(b'\x00')
-
-#                 n_deletes += 1
-
-#         # Write the index
-#         index_bucket = get_index_bucket(key_hash, n_buckets)
-#         old_bucket_pos = np_bucket_index[index_bucket]
-#         index_mmap.move(old_bucket_pos + one_extra_index_bytes_len, old_bucket_pos, old_index_mmap_len - old_bucket_pos)
-#         index_mmap.seek(old_bucket_pos)
-#         index_mmap.write(bucket_index1)
-#         if (index_bucket + 1) < n_buckets:
-#             np_bucket_index[index_bucket+1:] += one_extra_index_bytes_len
-#         old_index_mmap_len += one_extra_index_bytes_len
-
-#     ## Write back the bucket index which includes the data position
-#     ## No need when numpy uses the index_mmap directly
-#     # index_mmap.seek(0)
-#     # index_mmap.write(bucket_index_bytes)
-#     # index_mmap.flush()
-#     del np_bucket_index
-
-#     buffer_index.clear()
-#     # print(time() - t1)
-
-#     return n_deletes
 
 
 # def reindex(index_mmap, n_bytes_index, n_bytes_file, n_buckets, n_keys):
@@ -685,6 +563,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
     """
     fp = pathlib.Path(file_path)
+    self._file_path = fp
 
     if flag == "r":  # Open existing database for reading only (default)
         write = False
@@ -703,13 +582,13 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
     self._write = write
     self._write_buffer_size = write_buffer_size
-    self._file_path = fp
-    self._platform = sys.platform
+
+    # self._platform = sys.platform
 
     if fp_exists:
         if write:
             self._file = io.open(fp, 'r+b', buffering=0)
-            self._fd = self._file.fileno()
+            # self._fd = self._file.fileno()
             # self._file_mmap = mmap.mmap(self._fd, 0)
             # self._file_mmap = None
 
@@ -723,7 +602,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             self._thread_lock = Lock()
         else:
             self._file = io.open(fp, 'rb', buffering=0)
-            self._fd = self._file.fileno()
+            # self._fd = self._file.fileno()
             # self._file_mmap = mmap.mmap(self._fd, 0, access=mmap.ACCESS_READ)
             # self._file_mmap = None
             self._buffer_data = None
@@ -762,7 +641,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
                 print('File must have been closed incorrectly...rebuilding the n_keys...')
                 counter = count()
                 deque(zip(self.keys(), counter), maxlen=0)
-    
+
                 self._n_keys = next(counter)
             else:
                 raise ValueError('File must have been closed incorrectly. Please open with write access to fix it.')
@@ -779,7 +658,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         init_write_bytes = init_base_params_variable(self, key_serializer, value_serializer, self._n_buckets)
 
         self._file = io.open(fp, 'w+b', buffering=0)
-        self._fd = self._file.fileno()
+        # self._fd = self._file.fileno()
 
         self._buffer_data = bytearray()
         self._buffer_index = bytearray()
@@ -835,32 +714,6 @@ def copy_file_range(fsrc, fdst, count, offset_src, offset_dst, write_buffer_size
         write_count += fdst.write(data)
 
     fdst.flush()
-
-    # if hasattr(os, 'copy_file_range'):
-    # os.copy_file_range(fsrc.fileno(), fdst.fileno(), count, offset_src, offset_dst)
-    # os.fsync(fdst.fileno())
-
-
-# def init_index_file(file_path, file, file_len, fp_exists, data_end_pos, write_buffer_size, n_buckets, n_bytes_index):
-#     """
-
-#     """
-#     index_file_path = file_path.parent.joinpath(file_path.name + '.tmp')
-
-#     if fp_exists:
-#         index_file = io.open(index_file_path, 'w+b', buffering=write_buffer_size)
-#         copy_count = file_len - data_end_pos
-#         copy_file_range(file, index_file, copy_count, data_end_pos, 0, write_buffer_size)
-#         os.ftruncate(file.fileno(), data_end_pos)
-#         os.fsync(file.fileno())
-#     else:
-#         index_file = io.open(index_file_path, 'w+b', buffering=write_buffer_size)
-#         bucket_index_bytes = create_initial_bucket_indexes(n_buckets, n_bytes_index)
-#         index_file.write(bucket_index_bytes)
-
-#     index_file.flush()
-
-#     return index_file_path, index_file
 
 
 def read_base_params_variable(self, base_param_bytes, key_serializer, value_serializer):
@@ -994,7 +847,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     self._write = write
     self._write_buffer_size = write_buffer_size
     self._file_path = fp
-    self._platform = sys.platform
+    # self._platform = sys.platform
 
     if fp_exists:
         if write:
@@ -1036,7 +889,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
                 # print('File must have been closed incorrectly...rebuilding the n_keys...')
                 counter = count()
                 deque(zip(self.keys(), counter), maxlen=0)
-    
+
                 self._n_keys = next(counter)
             else:
                 raise ValueError('File must have been closed incorrectly. Please open with write access to fix it.')
@@ -1057,7 +910,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         init_write_bytes = init_base_params_fixed(self, key_serializer, value_len, self._n_buckets)
 
         self._file = io.open(fp, 'w+b', buffering=0)
-        self._fd = self._file.fileno()
+        # self._fd = self._file.fileno()
 
         self._buffer_data = bytearray()
         self._buffer_index = bytearray()
