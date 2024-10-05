@@ -12,7 +12,7 @@ from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
-import mmap
+# import mmap
 import time
 
 ##############################################
