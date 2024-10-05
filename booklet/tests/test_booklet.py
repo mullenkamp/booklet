@@ -13,7 +13,7 @@ from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
 import mmap
-from time import time
+import time
 
 ##############################################
 ### Parameters
@@ -39,6 +39,8 @@ tf = NamedTemporaryFile()
 file_path = tf.name
 
 data_dict = {key: key*2 for key in range(2, 30)}
+
+meta = {'test1': 'data'}
 
 
 def test_set_items():
@@ -78,6 +80,34 @@ def test_threading_writes():
     assert value == data_dict[10]
 
 
+def test_set_get_metadata():
+    """
+
+    """
+    with VariableValue(file_path, 'w') as f:
+        old_meta = f.get_metadata()
+        f.set_metadata(meta)
+
+    assert old_meta is None
+
+    with VariableValue(file_path) as f:
+        new_meta, ts = f.get_metadata(True)
+
+    assert new_meta == meta and isinstance(ts, int)
+
+
+def test_set_get_timestamp():
+    with VariableValue(file_path, 'w') as f:
+        ts_old, value = f.get_timestamp(10, True)
+        ts_new = int((time.time() + f._tz_offset) * 1000000)
+        f.set_timestamp(10, ts_new)
+
+    with VariableValue(file_path) as f:
+        ts_new = f.get_timestamp(10)
+
+    assert ts_new > ts_old and value == data_dict[10]
+
+
 def test_keys():
     with VariableValue(file_path) as f:
         keys = set(list(f.keys()))
@@ -92,6 +122,17 @@ def test_items():
         for key, value in f.items():
             source_value = data_dict[key]
             assert source_value == value
+
+
+def test_timestamps():
+    with VariableValue(file_path) as f:
+        for key, ts, value in f.timestamps(True):
+            source_value = data_dict[key]
+            assert source_value == value
+
+        ts_new = int((time.time() + f._tz_offset) * 1000000)
+        for key, ts in f.timestamps():
+            assert ts_new > ts
 
 
 def test_contains():
@@ -201,8 +242,9 @@ def test_set_items_get_items():
 def test_clear():
     with VariableValue(file_path, 'w') as f:
         f.clear()
+        f_meta = f.get_metadata()
 
-        assert (len(f) == 0) and (len(list(f.keys())) == 0)
+        assert (len(f) == 0) and (len(list(f.keys())) == 0) and (f_meta is None)
 
 
 

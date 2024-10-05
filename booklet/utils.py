@@ -15,10 +15,13 @@ from threading import Lock
 import portalocker
 # from fcntl import flock, LOCK_EX, LOCK_SH, LOCK_UN
 # import mmap
+from datetime import datetime, timezone
+import time
 from itertools import count
 from collections import Counter, defaultdict, deque
 import weakref
 import pathlib
+import orjson
 # from time import time
 
 # import serializers
@@ -42,7 +45,9 @@ key_hash_len = 13
 uuid_variable_blt = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 
-version = 3
+metadata_key_bytes = b'\xad\xb0\x1e\xbc\x1b\xa3C>\xb0CRw\xd1g\x86\xee'
+
+version = 4
 version_bytes = version.to_bytes(2, 'little', signed=False)
 
 init_n_buckets = 12007
@@ -80,6 +85,34 @@ n_buckets_reindex = {
 
 ############################################
 ### Functions
+
+
+def make_timestamp(tz_offset, timestamp=None):
+    """
+    The timestamp should be either None or an int of the number of microseconds in unix time. It will return an int of the number of microseconds in unix time.
+    There are many ways to convert a timestamp in various forms to the number of microseconds. I should include some examples...
+
+    For reference:
+    Milliseconds should have at least 6 bytes for storage, while microseconds should have at least 7 bytes.
+    """
+    datetime.utcnow
+    if timestamp is None:
+        int_us = int((time.time() + tz_offset) * 1000000)
+    elif isinstance(timestamp, int):
+        int_us = timestamp
+    # elif isinstance(timestamp, datetime):
+    #     int_us = int(timestamp.timestamp() * 1000000)
+    else:
+        raise TypeError('timestamp must be either None or a datetime object.')
+
+    return int_us
+
+
+def encode_metadata(data):
+    """
+
+    """
+    return orjson.dumps(data, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY)
 
 
 def close_files(file, n_keys, n_keys_pos, write):
@@ -201,6 +234,30 @@ def contains_key(file_mmap, key_hash, n_buckets):
         return False
 
 
+def set_timestamp(file, key, n_buckets, timestamp):
+    """
+
+    """
+    key_hash = hash_key(key)
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket)
+    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
+    if first_data_block_pos:
+        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
+        if data_block_pos:
+            ts_pos = data_block_pos + key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value
+            file.seek(ts_pos)
+
+            ts_bytes = int_to_bytes(timestamp, 7)
+            file.write(ts_bytes)
+
+            return True
+        else:
+            return False
+    else:
+        return False
+
+
 def get_value(file, key, n_buckets):
     """
     Combines everything necessary to return a value.
@@ -220,14 +277,48 @@ def get_value(file, key, n_buckets):
             key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
             value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
 
-            # file.seek(key_len_pos + key_len + n_bytes_key + n_bytes_value)
-            file.seek(key_len, 1)
+            file.seek(7 + key_len, 1)
             value = file.read(value_len)
 
     return value
 
 
-def iter_keys_values(file, n_buckets, include_key, include_value):
+def get_value_ts(file, key, n_buckets, include_value=True, include_ts=False):
+    """
+    Combines everything necessary to return a value.
+    """
+    output = False
+
+    key_hash = hash_key(key)
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket)
+    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
+    if first_data_block_pos:
+        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
+        if data_block_pos:
+            key_len_pos = data_block_pos + key_hash_len + n_bytes_file
+            file.seek(key_len_pos)
+            key_len_value_len = file.read(n_bytes_key + n_bytes_value)
+            key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
+            value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
+
+            if include_value and include_ts:
+                ts_key_value = file.read(7 + key_len + value_len)
+                ts_int = bytes_to_int(ts_key_value[:7])
+                value = ts_key_value[7 + key_len:]
+                output = value, ts_int
+            elif include_value:
+                file.seek(7 + key_len, 1)
+                output = (file.read(value_len), None)
+            elif include_ts:
+                output = (None, bytes_to_int(file.read(7)))
+            else:
+                raise ValueError('include_value and/or include_timestamp must be True.')
+
+    return output
+
+
+def iter_keys_values(file, n_buckets, include_key, include_value, include_ts=False):
     """
 
     """
@@ -244,24 +335,29 @@ def iter_keys_values(file, n_buckets, include_key, include_value):
         key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
         value_len = bytes_to_int(init_data_block[one_extra_index_bytes_len + n_bytes_key:])
         if next_data_block_pos: # A value of 0 means it was deleted
-            if include_key and include_value:
-                key_value = file.read(key_len + value_len)
-                key = key_value[:key_len]
-                value = key_value[key_len:]
-                yield key, value
+            ts_key_value = file.read(7 + key_len + value_len)
+            key = ts_key_value[7:7 + key_len]
+            if key != metadata_key_bytes:
+                if include_ts:
+                    ts_int = bytes_to_int(ts_key_value[:7])
+                    if include_value:
+                        value = ts_key_value[7 + key_len:]
+                        yield key, ts_int, value
+                    else:
+                        yield key, ts_int
 
-            elif include_key:
-                key = file.read(key_len)
-                yield key
-                file.seek(value_len, 1)
-
-            else:
-                file.seek(key_len, 1)
-                value = file.read(value_len)
-                yield value
-
-        else:
-            file.seek(key_len + value_len, 1)
+                elif include_key and include_value:
+                    value = ts_key_value[7 + key_len:]
+                    yield key, value
+    
+                elif include_key:
+                    yield key
+    
+                elif include_value:
+                    value = ts_key_value[7 + key_len:]
+                    yield value
+                else:
+                    raise ValueError('I need to include something for iter_keys_values.')
 
 
 def assign_delete_flags(file_mmap, key, n_buckets):
@@ -301,7 +397,7 @@ def assign_delete_flags(file_mmap, key, n_buckets):
         return False
 
 
-def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, write_buffer_size):
+def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, write_buffer_size, tz_offset, timestamp=None):
     """
 
     """
@@ -313,8 +409,10 @@ def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, wr
     key_hash = hash_key(key)
     key_bytes_len = len(key)
     value_bytes_len = len(value)
+    ts_int = make_timestamp(tz_offset, timestamp)
+    ts_bytes = int_to_bytes(ts_int, 7)
 
-    write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + int_to_bytes(key_bytes_len, n_bytes_key) + int_to_bytes(value_bytes_len, n_bytes_value) + key + value
+    write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + int_to_bytes(key_bytes_len, n_bytes_key) + int_to_bytes(value_bytes_len, n_bytes_value) + ts_bytes + key + value
 
     ## flush write buffer if the size is getting too large
     bd_pos = len(buffer_data)
@@ -580,8 +678,14 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
     else:
         raise ValueError("Invalid flag")
 
-    self._write = write
+    self.writable = write
     self._write_buffer_size = write_buffer_size
+
+    ## TZ offset
+    if time.daylight:
+        self._tz_offset = time.altzone
+    else:
+        self._tz_offset = time.timezone
 
     # self._platform = sys.platform
 
@@ -681,7 +785,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             # self._file_mmap.resize(sub_index_init_pos + (self._n_buckets * n_bytes_file))
 
     ## Create finalizer
-    self._finalizer = weakref.finalize(self, close_files, self._file, (256**4) - 1, self._n_keys_pos, self._write)
+    self._finalizer = weakref.finalize(self, close_files, self._file, (256**4) - 1, self._n_keys_pos, self.writable)
 
 
 def copy_file_range(fsrc, fdst, count, offset_src, offset_dst, write_buffer_size):
@@ -844,10 +948,16 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     else:
         raise ValueError("Invalid flag")
 
-    self._write = write
+    self.writable = write
     self._write_buffer_size = write_buffer_size
     self._file_path = fp
     # self._platform = sys.platform
+
+    ## TZ offset
+    if time.daylight:
+        self._tz_offset = time.altzone
+    else:
+        self._tz_offset = time.timezone
 
     if fp_exists:
         if write:
@@ -928,7 +1038,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
             write_init_bucket_indexes(self._file, self._n_buckets, sub_index_init_pos, write_buffer_size)
 
     ## Create finalizer
-    self._finalizer = weakref.finalize(self, close_files, self._file, (256**4) - 1, self._n_keys_pos, self._write)
+    self._finalizer = weakref.finalize(self, close_files, self._file, (256**4) - 1, self._n_keys_pos, self.writable)
 
 
 def read_base_params_fixed(self, base_param_bytes, key_serializer):
@@ -993,7 +1103,6 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets):
     self._n_buckets = n_buckets
     self._n_keys = 0
     self._n_keys_pos = n_keys_pos
-    # self._data_block_rel_pos_delete_bytes = int_to_bytes(0, n_bytes_file)
 
     n_bytes_file_bytes = int_to_bytes(n_bytes_file, 1)
     n_bytes_key_bytes = int_to_bytes(n_bytes_key, 1)

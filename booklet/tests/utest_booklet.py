@@ -127,7 +127,7 @@ n_buckets = 12007
 n_buckets = 1728017
 chunk_size = 1000
 b2 = b'0' * chunk_size
-n = 10000
+n = 1000000
 
 def make_test_file(n):
     with SqliteDict(file_path, outer_stack=False, flag='n') as f:
