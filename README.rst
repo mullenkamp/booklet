@@ -146,6 +146,21 @@ The open flag follows the standard dbm options:
 |         | for reading and writing                   |
 +---------+-------------------------------------------+
 
+Design
+-------
+There are two groups in a booklet file plus some initial bytes for parameters (sub index). The sub index is 200 bytes long, but currently only 37 bytes are used. The two other groups are the bucket index group and the data block group. The bucket index group contains the "hash table". This bucket index contains a fixed number of buckets (n_buckets) and each bucket contains a 6 byte integer of the position of the first data block associated with that bucket. When the user requests a value from a key input, the key is hashed and the modulus of the n_buckets is performed to determine which bucket to read. The 6 bytes is read from that bucket, converted to an integer, then booklet knows where the first data block is located in the file. The data block group contains all of the data blocks each of which contains the key hash, next data block pos, key length, value length, timestamp (if init with timestamps), key, and value (in this order).
+
+The number of bytes per data block object includes:
+key hash: 13
+next data block pos: 6
+key length: 2
+value length: 4
+timestamp: either 0 (if no timestamps where init) or 7
+key: variable
+value: variable
+
+When the first data block pos is determined through the initial key hashing and bucket reading, the first 19 bytes (key hash and next data block pos) are read. Booklet then checks the next data block pos (ndbp). If the ndbp is 0, then it has been assigned the delete flag and is ignored.
+
 
 Limitations
 -----------
