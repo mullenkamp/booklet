@@ -24,8 +24,8 @@ import pathlib
 import orjson
 # from time import time
 
-# import serializers
-from . import serializers
+import serializers
+# from . import serializers
 
 ############################################
 ### Parameters
@@ -349,18 +349,20 @@ def iter_keys_values(file, n_buckets, include_key, include_value, include_ts=Fal
                 elif include_key and include_value:
                     value = ts_key_value[7 + key_len:]
                     yield key, value
-    
+
                 elif include_key:
                     yield key
-    
+
                 elif include_value:
                     value = ts_key_value[7 + key_len:]
                     yield value
                 else:
                     raise ValueError('I need to include something for iter_keys_values.')
+        else:
+            file.seek(7 + key_len + value_len, 1)
 
 
-def assign_delete_flags(file_mmap, key, n_buckets):
+def assign_delete_flags(file, key, n_buckets):
     """
     Assigns 0 at the key hash index and the key/value data block.
     """
@@ -369,20 +371,20 @@ def assign_delete_flags(file_mmap, key, n_buckets):
     key_hash = hash_key(key)
     index_bucket = get_index_bucket(key_hash, n_buckets)
     bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file_mmap, bucket_index_pos)
+    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
     if first_data_block_pos:
         previous_data_index_pos = bucket_index_pos
         data_block_pos = first_data_block_pos
         while True:
-            file_mmap.seek(data_block_pos)
-            data_index = file_mmap.read(index_len)
+            file.seek(data_block_pos)
+            data_index = file.read(index_len)
             next_data_block_pos = bytes_to_int(data_index[key_hash_len:])
             if next_data_block_pos:
                 if data_index[:key_hash_len] == key_hash:
-                    file_mmap.seek(-n_bytes_file, 1)
-                    file_mmap.write(b'\x00\x00\x00\x00\x00\x00')
-                    file_mmap.seek(previous_data_index_pos)
-                    file_mmap.write(b'\x01\x00\x00\x00\x00\x00')
+                    file.seek(-n_bytes_file, 1)
+                    file.write(b'\x00\x00\x00\x00\x00\x00')
+                    file.seek(previous_data_index_pos)
+                    file.write(b'\x01\x00\x00\x00\x00\x00')
                     return True
 
                 elif next_data_block_pos == 1:
@@ -501,7 +503,7 @@ def update_index(file_mmap, buffer_index, n_buckets):
                     n_keys += 1
                     break
 
-                previous_data_index_pos = data_block_pos + key_hash_len
+                previous_data_index_pos = key_hash_len + data_block_pos
                 data_block_pos = next_data_block_pos
         else:
             file_mmap.seek(bucket_index_pos)

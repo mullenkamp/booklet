@@ -24,8 +24,8 @@ import orjson
 #     fcntl_import = False
 
 
-# import utils
-from . import utils
+import utils
+# from . import utils
 
 # import serializers
 # from . import serializers
@@ -50,9 +50,13 @@ class Booklet(MutableMapping):
         Sets the metadata for the booklet. The data input must be a json serializable object.
         """
         if self.writable:
+            self.sync()
             with self._thread_lock:
                 _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp)
-            self.sync()
+                if self._buffer_index:
+                    utils.flush_data_buffer(self._file, self._buffer_data)
+                _ = utils.update_index(self._file, self._buffer_index, self._n_buckets)
+                self._file.flush()
         else:
             raise ValueError('File is open for read only.')
 

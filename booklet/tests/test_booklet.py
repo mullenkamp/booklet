@@ -183,6 +183,10 @@ def test_items2():
 
 def test_values():
     with VariableValue(file_path) as f:
+        for value in f.values():
+            pass
+
+    with VariableValue(file_path) as f:
         for key, source_value in data_dict.items():
             value = f[key]
             assert source_value == value
