@@ -163,12 +163,14 @@ When the first data block pos is determined through the initial key hashing and 
 
 When we find the identical key hash, Booklet reads 6 bytes (key len and value len) to determine how many bytes are needed to be read to get the key/value (since they are variable). Depending on whether the user wants the key, value, and/or timestamp, Booklet will read 7 bytes (timestamp len) plus the number of bytes for the key and value. 
 
-Deletes...
-
+Deletes assign ndbp to 0 and reassign the prior data block it's original ndbp. This essentially just removes this data block from the key hash data block chain.
+A delete also happens when a user "overwrites" the same key.
 
 Limitations
 -----------
-The only current limitation is that the user should assign an appropriate n_buckets. This should be approximately the same number as the expected number of keys/values. The default is set at 12007. An automatic re-indexing should come eventually.
+The main limitation is that the user should assign an appropriate n_buckets. This should be approximately the same number as the expected number of keys/values. The default is set at 12007. An automatic re-indexing should come eventually.
+
+There's currently no "prune" method to remove deleted data. This should come eventually too. Since timestamps have now been added, a prune method could optionally remove data older than a certain date. Total data size removal should also be an option.
 
 Benchmarks
 -----------
