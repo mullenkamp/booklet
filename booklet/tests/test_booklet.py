@@ -147,6 +147,7 @@ def test_items(file_path):
             assert source_value == value
 
 
+@pytest.mark.parametrize("file_path", [file_path2])
 def test_timestamps(file_path):
     with VariableValue(file_path) as f:
         for key, ts, value in f.timestamps(True):
@@ -181,7 +182,7 @@ def test_delete_len(file_path, data):
     indexes = [11, 12]
 
     for index in indexes:
-        _ = data_dict.pop(index)
+        _ = data.pop(index)
 
         with VariableValue(file_path, 'w') as f:
             f[index] = 0
