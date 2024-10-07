@@ -319,7 +319,8 @@ print(time() - t1)
 
 # f.read(10)
 
-
+###########
+### Find conflicting buckets for different keys
 s1 = {}
 for i in range(100000):
     int_bytes = utils.int_to_bytes(i, 4)
