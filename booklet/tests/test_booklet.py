@@ -12,13 +12,26 @@ from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
+from copy import deepcopy
 # import mmap
 import time
 
 ##############################################
 ### Parameters
 
+tf1 = NamedTemporaryFile()
+file_path1 = tf1.name
+tf2 = NamedTemporaryFile()
+file_path2 = tf2.name
 
+data_dict = {key: key*2 for key in range(2, 30)}
+data_dict[97] = 97*2 # key hash conflict test - 97 conflicts with 11
+
+data_dict2 = deepcopy(data_dict)
+
+meta = {'test1': 'data'}
+
+# file_path = file_path1
 
 ##############################################
 ### Functions
@@ -35,37 +48,30 @@ def set_item(f, key, value):
 
 print(__version__)
 
-tf = NamedTemporaryFile()
-file_path = tf.name
-
-data_dict = {key: key*2 for key in range(2, 30)}
-
-meta = {'test1': 'data'}
-
 
 def test_set_items():
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+    with VariableValue(file_path1, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=True) as f:
         for key, value in data_dict.items():
             f[key] = value
 
-    with VariableValue(file_path) as f:
+    with VariableValue(file_path1) as f:
         value = f[10]
 
     assert value == data_dict[10]
 
 
 def test_update():
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+    with VariableValue(file_path1, 'n', key_serializer='uint4', value_serializer='pickle') as f:
         f.update(data_dict)
 
-    with VariableValue(file_path) as f:
+    with VariableValue(file_path1) as f:
         value = f[10]
 
     assert value == data_dict[10]
 
 
 def test_threading_writes():
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+    with VariableValue(file_path1, 'n', key_serializer='uint4', value_serializer='pickle') as f:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
             for key, value in data_dict.items():
@@ -74,13 +80,27 @@ def test_threading_writes():
 
         _ = concurrent.futures.wait(futures)
 
-    with VariableValue(file_path) as f:
+    with VariableValue(file_path1) as f:
         value = f[10]
 
     assert value == data_dict[10]
 
 
-def test_set_get_metadata():
+#######################
+### Set up files for following tests
+
+
+with VariableValue(file_path1, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=False) as f:
+    for key, value in data_dict.items():
+        f[key] = value
+
+with VariableValue(file_path2, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=True) as f:
+    for key, value in data_dict.items():
+        f[key] = value
+
+
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_set_get_metadata(file_path):
     """
 
     """
@@ -91,12 +111,13 @@ def test_set_get_metadata():
     assert old_meta is None
 
     with VariableValue(file_path) as f:
-        new_meta, ts = f.get_metadata(True)
+        new_meta = f.get_metadata()
 
-    assert new_meta == meta and isinstance(ts, int)
+    assert new_meta == meta
 
 
-def test_set_get_timestamp():
+@pytest.mark.parametrize("file_path", [file_path2])
+def test_set_get_timestamp(file_path):
     with VariableValue(file_path, 'w') as f:
         ts_old, value = f.get_timestamp(10, True)
         ts_new = int((time.time() + f._tz_offset) * 1000000)
@@ -108,7 +129,8 @@ def test_set_get_timestamp():
     assert ts_new > ts_old and value == data_dict[10]
 
 
-def test_keys():
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_keys(file_path):
     with VariableValue(file_path) as f:
         keys = set(list(f.keys()))
 
@@ -117,14 +139,15 @@ def test_keys():
     assert source_keys == keys
 
 
-def test_items():
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_items(file_path):
     with VariableValue(file_path) as f:
         for key, value in f.items():
             source_value = data_dict[key]
             assert source_value == value
 
 
-def test_timestamps():
+def test_timestamps(file_path):
     with VariableValue(file_path) as f:
         for key, ts, value in f.timestamps(True):
             source_value = data_dict[key]
@@ -135,7 +158,8 @@ def test_timestamps():
             assert ts_new > ts
 
 
-def test_contains():
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_contains(file_path):
     with VariableValue(file_path) as f:
         for key in data_dict:
             if key not in f:
@@ -144,16 +168,17 @@ def test_contains():
     assert True
 
 
-def test_len():
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_len(file_path):
     with VariableValue(file_path) as f:
         new_len = len(f)
 
     assert len(data_dict) == new_len
 
 
-# @pytest.mark.parametrize('index', [10, 12])
-def test_delete_len():
-    indexes = [10, 12]
+@pytest.mark.parametrize("file_path,data", [(file_path1, data_dict), (file_path2, data_dict2)])
+def test_delete_len(file_path, data):
+    indexes = [11, 12]
 
     for index in indexes:
         _ = data_dict.pop(index)
@@ -173,15 +198,19 @@ def test_delete_len():
             except KeyError:
                 pass
 
-        assert new_len == len(data_dict)
+        assert new_len == len(data)
 
-def test_items2():
+
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_items2(file_path):
     with VariableValue(file_path) as f:
         for key, value in f.items():
             source_value = data_dict[key]
             assert source_value == value
 
-def test_values():
+
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_values(file_path):
     with VariableValue(file_path) as f:
         for value in f.values():
             pass
@@ -204,21 +233,22 @@ def test_values():
 #             assert source_value == value
 
 
-def test_set_items_get_items():
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_set_items_get_items(file_path):
     with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
         for key, value in data_dict.items():
             f[key] = value
 
     with VariableValue(file_path, 'w') as f:
         f[50] = [0, 0]
-        value = f[11]
+        value = f[10]
 
     with VariableValue(file_path) as f:
         value = f[50]
         assert value == [0, 0]
 
-        value = f[11]
-        assert value == data_dict[11]
+        value = f[10]
+        assert value == data_dict[10]
 
 
 # def test_reindex():
@@ -243,7 +273,8 @@ def test_set_items_get_items():
 
 
 ## Always make this last!!!
-def test_clear():
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_clear(file_path):
     with VariableValue(file_path, 'w') as f:
         f.clear()
         f_meta = f.get_metadata()

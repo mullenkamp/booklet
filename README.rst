@@ -159,7 +159,11 @@ timestamp: either 0 (if no timestamps where init) or 7
 key: variable
 value: variable
 
-When the first data block pos is determined through the initial key hashing and bucket reading, the first 19 bytes (key hash and next data block pos) are read. Booklet then checks the next data block pos (ndbp). If the ndbp is 0, then it has been assigned the delete flag and is ignored.
+When the first data block pos is determined through the initial key hashing and bucket reading, the first 19 bytes (key hash and next data block pos) are read. Booklet then checks the next data block pos (ndbp). If the ndbp is 0, then it has been assigned the delete flag and is ignored. The key hash from the data block is compared to the key hash from the input. If they are the same, then this is the data block we want. If they are different, then we look again at the ndbp. If the ndbp is 1, then this is the last data block associated with the key hash and the input key hash doesn't exist. If the ndbp is > 1, then we move to the next data block based on the ndbp and try the cycle again until either we hit a dead end or we find the same key hash.
+
+When we find the identical key hash, Booklet reads 6 bytes (key len and value len) to determine how many bytes are needed to be read to get the key/value (since they are variable). Depending on whether the user wants the key, value, and/or timestamp, Booklet will read 7 bytes (timestamp len) plus the number of bytes for the key and value. 
+
+Deletes...
 
 
 Limitations

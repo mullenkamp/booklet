@@ -24,8 +24,8 @@ import orjson
 #     fcntl_import = False
 
 
-# import utils
-from . import utils
+import utils
+# from . import utils
 
 # import serializers
 # from . import serializers
@@ -52,7 +52,7 @@ class Booklet(MutableMapping):
         if self.writable:
             self.sync()
             with self._thread_lock:
-                _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp)
+                _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp, self._ts_bytes_len)
                 if self._buffer_index:
                     utils.flush_data_buffer(self._file, self._buffer_data)
                 _ = utils.update_index(self._file, self._buffer_index, self._n_buckets)
@@ -64,7 +64,7 @@ class Booklet(MutableMapping):
         """
 
         """
-        output = utils.get_value_ts(self._file, utils.metadata_key_bytes, self._n_buckets, True, include_timestamp)
+        output = utils.get_value_ts(self._file, utils.metadata_key_bytes, self._n_buckets, True, include_timestamp, self._ts_bytes_len)
 
         if output:
             value, ts_int = output
@@ -110,24 +110,27 @@ class Booklet(MutableMapping):
         return value
 
     def keys(self):
-        for key in utils.iter_keys_values(self._file, self._n_buckets, True, False):
+        for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len):
             yield self._post_key(key)
 
     def items(self):
-        for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True):
+        for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len):
             yield self._post_key(key), self._post_value(value)
 
     def values(self):
-        for value in utils.iter_keys_values(self._file, self._n_buckets, False, True):
+        for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len):
             yield self._post_value(value)
 
     def timestamps(self, include_value=False):
-        if include_value:
-            for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True):
-                yield self._post_key(key), ts_int, self._post_value(value)
+        if self._init_timestamps:
+            if include_value:
+                for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len):
+                    yield self._post_key(key), ts_int, self._post_value(value)
+            else:
+                for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len):
+                    yield self._post_key(key), ts_int
         else:
-            for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True):
-                yield self._post_key(key), ts_int
+            raise ValueError('timestamps were not initialized with this file.')
 
     def __iter__(self):
         return self.keys()
@@ -151,7 +154,7 @@ class Booklet(MutableMapping):
         return utils.contains_key(self._file, hash_key, self._n_buckets)
 
     def get(self, key, default=None):
-        value = utils.get_value(self._file, self._pre_key(key), self._n_buckets)
+        value = utils.get_value(self._file, self._pre_key(key), self._n_buckets, self._ts_bytes_len)
 
         if value:
             return self._post_value(value)
@@ -162,25 +165,34 @@ class Booklet(MutableMapping):
         """
 
         """
-        output = utils.get_value_ts(self._file, self._pre_key(key), self._n_buckets, include_value, True)
+        if self._init_timestamps:
+            output = utils.get_value_ts(self._file, self._pre_key(key), self._n_buckets, include_value, True, self._ts_bytes_len)
 
-        if output:
-            value, ts_int = output
-            if value:
-                return ts_int, self._post_value(value)
+            if output:
+                value, ts_int = output
+                if value:
+                    return ts_int, self._post_value(value)
+                else:
+                    return ts_int
             else:
-                return ts_int
+                return default
         else:
-            return default
+            raise ValueError('timestamps were not initialized with this file.')
 
     def set_timestamp(self, key, timestamp):
         """
         timestamp should be an int of the number of microseconds from UTC unix time.
         """
-        success = utils.set_timestamp(self._file, self._pre_key(key), self._n_buckets, timestamp)
+        if self._init_timestamps:
+            if self.writable:
+                success = utils.set_timestamp(self._file, self._pre_key(key), self._n_buckets, timestamp)
 
-        if not success:
-            raise KeyError(key)
+                if not success:
+                    raise KeyError(key)
+            else:
+                raise ValueError('File is open for read only.')
+        else:
+            raise ValueError('timestamps were not initialized with this file.')
 
 
     def set(self, key, value, timestamp=None, encode_value=True):
@@ -191,7 +203,7 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 if encode_value:
                     value = self._pre_value(value)
-                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp)
+                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp, self._ts_bytes_len)
                 self._n_keys += n_extra_keys
         else:
             raise ValueError('File is open for read only.')
@@ -204,7 +216,7 @@ class Booklet(MutableMapping):
         if self.writable:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset)
+                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, None, self._ts_bytes_len)
                     self._n_keys += n_extra_keys
 
         else:
@@ -225,12 +237,12 @@ class Booklet(MutableMapping):
 
 
     def __getitem__(self, key):
-        value = utils.get_value(self._file, self._pre_key(key), self._n_buckets)
+        value = self.get(key)
 
-        if not value:
+        if value is None:
             raise KeyError(key)
         else:
-            return self._post_value(value)
+            return value
 
 
     def __setitem__(self, key, value):
@@ -244,7 +256,7 @@ class Booklet(MutableMapping):
         if self.writable:
             self.sync()
             with self._thread_lock:
-                del_bool = utils.assign_delete_flags(self._file, self._pre_key(key), self._n_buckets)
+                del_bool = utils.assign_delete_flag(self._file, self._pre_key(key), self._n_buckets)
                 if del_bool:
                     self._n_keys -= 1
                     # self._file.seek(self._n_deletes_pos)
@@ -365,11 +377,11 @@ class VariableValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=False):
         """
 
         """
-        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size)
+        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps)
 
 
 ### Alias

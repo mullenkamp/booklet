@@ -24,8 +24,8 @@ import pathlib
 import orjson
 # from time import time
 
-# import serializers
-from . import serializers
+import serializers
+# from . import serializers
 
 ############################################
 ### Parameters
@@ -47,8 +47,8 @@ uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 
 metadata_key_bytes = b'\xad\xb0\x1e\xbc\x1b\xa3C>\xb0CRw\xd1g\x86\xee'
 
-version = 4
-version_bytes = version.to_bytes(2, 'little', signed=False)
+current_version = 4
+current_version_bytes = current_version.to_bytes(2, 'little', signed=False)
 
 init_n_buckets = 12007
 n_buckets_reindex = {
@@ -258,7 +258,7 @@ def set_timestamp(file, key, n_buckets, timestamp):
         return False
 
 
-def get_value(file, key, n_buckets):
+def get_value(file, key, n_buckets, ts_bytes_len=0):
     """
     Combines everything necessary to return a value.
     """
@@ -277,13 +277,13 @@ def get_value(file, key, n_buckets):
             key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
             value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
 
-            file.seek(7 + key_len, 1)
+            file.seek(ts_bytes_len + key_len, 1)
             value = file.read(value_len)
 
     return value
 
 
-def get_value_ts(file, key, n_buckets, include_value=True, include_ts=False):
+def get_value_ts(file, key, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0):
     """
     Combines everything necessary to return a value.
     """
@@ -303,22 +303,22 @@ def get_value_ts(file, key, n_buckets, include_value=True, include_ts=False):
             value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
 
             if include_value and include_ts:
-                ts_key_value = file.read(7 + key_len + value_len)
-                ts_int = bytes_to_int(ts_key_value[:7])
-                value = ts_key_value[7 + key_len:]
+                ts_key_value = file.read(ts_bytes_len + key_len + value_len)
+                ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
+                value = ts_key_value[ts_bytes_len + key_len:]
                 output = value, ts_int
             elif include_value:
-                file.seek(7 + key_len, 1)
+                file.seek(ts_bytes_len + key_len, 1)
                 output = (file.read(value_len), None)
             elif include_ts:
-                output = (None, bytes_to_int(file.read(7)))
+                output = (None, bytes_to_int(file.read(ts_bytes_len)))
             else:
                 raise ValueError('include_value and/or include_timestamp must be True.')
 
     return output
 
 
-def iter_keys_values(file, n_buckets, include_key, include_value, include_ts=False):
+def iter_keys_values(file, n_buckets, include_key, include_value, include_ts=False, ts_bytes_len=0):
     """
 
     """
@@ -335,34 +335,34 @@ def iter_keys_values(file, n_buckets, include_key, include_value, include_ts=Fal
         key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
         value_len = bytes_to_int(init_data_block[one_extra_index_bytes_len + n_bytes_key:])
         if next_data_block_pos: # A value of 0 means it was deleted
-            ts_key_value = file.read(7 + key_len + value_len)
-            key = ts_key_value[7:7 + key_len]
+            ts_key_value = file.read(ts_bytes_len + key_len + value_len)
+            key = ts_key_value[ts_bytes_len:ts_bytes_len + key_len]
             if key != metadata_key_bytes:
                 if include_ts:
-                    ts_int = bytes_to_int(ts_key_value[:7])
+                    ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
                     if include_value:
-                        value = ts_key_value[7 + key_len:]
+                        value = ts_key_value[ts_bytes_len + key_len:]
                         yield key, ts_int, value
                     else:
                         yield key, ts_int
 
                 elif include_key and include_value:
-                    value = ts_key_value[7 + key_len:]
+                    value = ts_key_value[ts_bytes_len + key_len:]
                     yield key, value
 
                 elif include_key:
                     yield key
 
                 elif include_value:
-                    value = ts_key_value[7 + key_len:]
+                    value = ts_key_value[ts_bytes_len + key_len:]
                     yield value
                 else:
                     raise ValueError('I need to include something for iter_keys_values.')
         else:
-            file.seek(7 + key_len + value_len, 1)
+            file.seek(ts_bytes_len + key_len + value_len, 1)
 
 
-def assign_delete_flags(file, key, n_buckets):
+def assign_delete_flag(file, key, n_buckets):
     """
     Assigns 0 at the key hash index and the key/value data block.
     """
@@ -378,13 +378,15 @@ def assign_delete_flags(file, key, n_buckets):
         while True:
             file.seek(data_block_pos)
             data_index = file.read(index_len)
-            next_data_block_pos = bytes_to_int(data_index[key_hash_len:])
+            next_data_block_pos_bytes = data_index[key_hash_len:]
+            next_data_block_pos = bytes_to_int(next_data_block_pos_bytes)
             if next_data_block_pos:
                 if data_index[:key_hash_len] == key_hash:
                     file.seek(-n_bytes_file, 1)
                     file.write(b'\x00\x00\x00\x00\x00\x00')
                     file.seek(previous_data_index_pos)
-                    file.write(b'\x01\x00\x00\x00\x00\x00')
+                    # file.write(b'\x01\x00\x00\x00\x00\x00')
+                    file.write(next_data_block_pos_bytes)
                     return True
 
                 elif next_data_block_pos == 1:
@@ -399,7 +401,7 @@ def assign_delete_flags(file, key, n_buckets):
         return False
 
 
-def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, write_buffer_size, tz_offset, timestamp=None):
+def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, write_buffer_size, tz_offset, timestamp=None, ts_bytes_len=0):
     """
 
     """
@@ -411,10 +413,13 @@ def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, wr
     key_hash = hash_key(key)
     key_bytes_len = len(key)
     value_bytes_len = len(value)
-    ts_int = make_timestamp(tz_offset, timestamp)
-    ts_bytes = int_to_bytes(ts_int, 7)
 
-    write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + int_to_bytes(key_bytes_len, n_bytes_key) + int_to_bytes(value_bytes_len, n_bytes_value) + ts_bytes + key + value
+    if ts_bytes_len:
+        ts_int = make_timestamp(tz_offset, timestamp)
+        ts_bytes = int_to_bytes(ts_int, ts_bytes_len)
+        write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + int_to_bytes(key_bytes_len, n_bytes_key) + int_to_bytes(value_bytes_len, n_bytes_value) + ts_bytes + key + value
+    else:
+        write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + int_to_bytes(key_bytes_len, n_bytes_key) + int_to_bytes(value_bytes_len, n_bytes_value) + key + value
 
     ## flush write buffer if the size is getting too large
     bd_pos = len(buffer_data)
@@ -455,7 +460,7 @@ def flush_data_buffer(file, buffer_data):
         return old_len
 
 
-def update_index(file_mmap, buffer_index, n_buckets):
+def update_index(file, buffer_index, n_buckets):
     """
 
     """
@@ -472,42 +477,46 @@ def update_index(file_mmap, buffer_index, n_buckets):
         end = start + one_extra_index_bytes_len
         index_data = buffer_index[start:end]
         key_hash = index_data[:key_hash_len]
-        new_data_block_pos = index_data[key_hash_len:]
+        new_data_block_pos_bytes = index_data[key_hash_len:]
 
         index_bucket = get_index_bucket(key_hash, n_buckets)
         bucket_index_pos = get_bucket_index_pos(index_bucket)
-        first_data_block_pos = get_first_data_block_pos(file_mmap, bucket_index_pos)
+        first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
         if first_data_block_pos:
             previous_data_index_pos = bucket_index_pos
             data_block_pos = first_data_block_pos
             while True:
-                file_mmap.seek(data_block_pos)
-                data_index = file_mmap.read(one_extra_index_bytes_len)
-                next_data_block_pos = bytes_to_int(data_index[key_hash_len:])
+                file.seek(data_block_pos)
+                data_index = file.read(one_extra_index_bytes_len)
+                next_data_block_pos_bytes = data_index[key_hash_len:]
+                next_data_block_pos = bytes_to_int(next_data_block_pos_bytes)
                 if next_data_block_pos:
                     if data_index[:key_hash_len] == key_hash:
-                        file_mmap.seek(-n_bytes_file, 1)
-                        file_mmap.write(b'\x00\x00\x00\x00\x00\x00')
-                        file_mmap.seek(previous_data_index_pos)
-                        file_mmap.write(new_data_block_pos)
+                        file.seek(-n_bytes_file, 1)
+                        file.write(b'\x00\x00\x00\x00\x00\x00')
+                        file.seek(previous_data_index_pos)
+                        file.write(new_data_block_pos_bytes)
+                        if next_data_block_pos > 1:
+                            file.seek(bytes_to_int(new_data_block_pos_bytes) + key_hash_len)
+                            file.write(next_data_block_pos_bytes)
                         break
 
                     elif next_data_block_pos == 1:
-                        file_mmap.seek(-n_bytes_file, 1)
-                        file_mmap.write(new_data_block_pos)
+                        file.seek(-n_bytes_file, 1)
+                        file.write(new_data_block_pos_bytes)
                         n_keys += 1
                         break
                 else:
-                    file_mmap.seek(previous_data_index_pos)
-                    file_mmap.write(new_data_block_pos)
+                    file.seek(previous_data_index_pos)
+                    file.write(new_data_block_pos_bytes)
                     n_keys += 1
                     break
 
-                previous_data_index_pos = key_hash_len + data_block_pos
+                previous_data_index_pos = data_block_pos + key_hash_len
                 data_block_pos = next_data_block_pos
         else:
-            file_mmap.seek(bucket_index_pos)
-            file_mmap.write(new_data_block_pos)
+            file.seek(bucket_index_pos)
+            file.write(new_data_block_pos_bytes)
             n_keys += 1
 
     buffer_index.clear()
@@ -658,7 +667,7 @@ def clear(file, n_buckets, n_keys_pos, write_buffer_size):
 #     return removed_n_bytes
 
 
-def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size):
+def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size, init_timestamps):
     """
 
     """
@@ -729,7 +738,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             raise TypeError('This is not the correct file type.')
 
         version = bytes_to_int(base_param_bytes[16:18])
-        if version < version:
+        if version < 3:
             raise ValueError('File is an older version.')
 
         # TODO : Create a process that will recreate the index if the data end pos is < 200. This can be done by rolling over the data blocks and iteratively writing the indexes.
@@ -761,7 +770,13 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         else:
             self._n_buckets = init_n_buckets
 
-        init_write_bytes = init_base_params_variable(self, key_serializer, value_serializer, self._n_buckets)
+        init_write_bytes = init_base_params_variable(self, key_serializer, value_serializer, self._n_buckets, init_timestamps)
+
+        self._init_timestamps = init_timestamps
+        if self._init_timestamps:
+            self._ts_bytes_len = 7
+        else:
+            self._ts_bytes_len = 0
 
         self._file = io.open(fp, 'w+b', buffering=0)
         # self._fd = self._file.fileno()
@@ -835,6 +850,11 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
     saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
     self._n_keys = bytes_to_int(base_param_bytes[33:37])
     # self._value_len = bytes_to_int(base_param_bytes[37:41])
+    self._init_timestamps = base_param_bytes[41]
+    if self._init_timestamps:
+        self._ts_bytes_len = 7
+    else:
+        self._ts_bytes_len = 0
 
     self._n_keys_pos = n_keys_pos
 
@@ -866,7 +886,7 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_base_params_variable(self, key_serializer, value_serializer, n_buckets):
+def init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps):
     """
 
     """
@@ -916,8 +936,12 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets)
     saved_key_serializer_bytes = int_to_bytes(key_serializer_code, 2)
     n_keys_bytes = int_to_bytes(0, 4)
     value_len_bytes = int_to_bytes(0, 4)
+    if init_timestamps:
+        init_timestamps_bytes = b'\x01'
+    else:
+        init_timestamps_bytes = b'\x00'
 
-    init_write_bytes = uuid_variable_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes
+    init_write_bytes = uuid_variable_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes
 
     extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
 
@@ -989,7 +1013,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
             raise TypeError('This is not the correct file type.')
 
         version = bytes_to_int(base_param_bytes[16:18])
-        if version < version:
+        if version < 3:
             raise ValueError('File is an older version.')
 
         ## Read the rest of the base parameters
@@ -1056,6 +1080,7 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
     saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
     self._n_keys = bytes_to_int(base_param_bytes[33:37])
     self._value_len = bytes_to_int(base_param_bytes[37:41])
+    # self._init_timestamps = base_param_bytes[41]
 
     self._n_keys_pos = n_keys_pos
 
@@ -1116,7 +1141,7 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets):
     n_keys_bytes = int_to_bytes(0, 4)
     n_bytes_value_bytes = int_to_bytes(0, 1)
 
-    init_write_bytes = uuid_fixed_blt + version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes
+    init_write_bytes = uuid_fixed_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes
 
     extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
     init_write_bytes += extra_bytes

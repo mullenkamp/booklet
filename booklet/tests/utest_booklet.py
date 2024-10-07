@@ -320,7 +320,16 @@ print(time() - t1)
 # f.read(10)
 
 
-
+s1 = {}
+for i in range(100000):
+    int_bytes = utils.int_to_bytes(i, 4)
+    key_hash = utils.hash_key(int_bytes)
+    mod1 = utils.bytes_to_int(key_hash) % 12007
+    if mod1 in s1:
+        print(i)
+        break
+    else:
+        s1[mod1] = i
 
 
 
