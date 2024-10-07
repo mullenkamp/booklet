@@ -749,6 +749,12 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
         ## Read the rest of the base parameters
         read_base_params_variable(self, base_param_bytes, key_serializer, value_serializer)
+        if self._version < 4:
+            if self._version == 3:
+               self._init_timestamps = 0
+               self._ts_bytes_len = 0
+            else:
+                raise ValueError('File is an older version.')
 
         ## Check the n_keys
         if self._n_keys == (256**4) - 1:
@@ -841,6 +847,7 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
     """
 
     """
+    self._version = bytes_to_int(base_param_bytes[16:18])
     self._n_bytes_file = bytes_to_int(base_param_bytes[18:19])
     self._n_bytes_key = bytes_to_int(base_param_bytes[19:20])
     self._n_bytes_value = bytes_to_int(base_param_bytes[20:21])
