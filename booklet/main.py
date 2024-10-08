@@ -58,7 +58,7 @@ class Booklet(MutableMapping):
         Accessed by self._file_timestamp
         """
         ts_int = utils.make_timestamp_int(timestamp)
-        ts_int_bytes = utils.int_to_bytes(ts_int, 6)
+        ts_int_bytes = utils.int_to_bytes(ts_int, utils.timestamp_bytes_len)
 
         self._file.seek(utils.file_timestamp_pos)
         self._file.write(ts_int_bytes)

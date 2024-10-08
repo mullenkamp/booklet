@@ -35,6 +35,7 @@ sub_index_init_pos = 200
 # n_deletes_pos = 33
 n_keys_pos = 33
 file_timestamp_pos = 42
+timestamp_bytes_len = 7
 
 # n_bytes_index = 4
 n_bytes_file = 6
@@ -278,7 +279,7 @@ def set_timestamp(file, key, n_buckets, timestamp):
             ts_pos = data_block_pos + key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value
             file.seek(ts_pos)
 
-            ts_bytes = int_to_bytes(timestamp, 7)
+            ts_bytes = int_to_bytes(timestamp, timestamp_bytes_len)
             file.write(ts_bytes)
 
             return True
@@ -799,7 +800,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
         self._init_timestamps = init_timestamps
         if self._init_timestamps:
-            self._ts_bytes_len = 7
+            self._ts_bytes_len = timestamp_bytes_len
         else:
             self._ts_bytes_len = 0
 
@@ -878,11 +879,11 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
     # self._value_len = bytes_to_int(base_param_bytes[37:41])
     self._init_timestamps = base_param_bytes[41]
     if self._init_timestamps:
-        self._ts_bytes_len = 7
+        self._ts_bytes_len = timestamp_bytes_len
     else:
         self._ts_bytes_len = 0
 
-    self._file_timestamp = bytes_to_int(base_param_bytes[file_timestamp_pos:file_timestamp_pos+6])
+    self._file_timestamp = bytes_to_int(base_param_bytes[file_timestamp_pos:file_timestamp_pos + timestamp_bytes_len])
 
     self._n_keys_pos = n_keys_pos
 
@@ -970,7 +971,7 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets,
         init_timestamps_bytes = b'\x00'
 
     self._file_timestamp = make_timestamp_int()
-    file_ts_bytes = int_to_bytes(self._file_timestamp, 6)
+    file_ts_bytes = int_to_bytes(self._file_timestamp, timestamp_bytes_len)
 
     init_write_bytes = uuid_variable_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes
 
@@ -1110,7 +1111,7 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
     self._value_len = bytes_to_int(base_param_bytes[37:41])
     self._init_timestamps = base_param_bytes[41]
     self._ts_bytes_len = 0
-    self._file_timestamp = bytes_to_int(base_param_bytes[file_timestamp_pos:file_timestamp_pos+6])
+    self._file_timestamp = bytes_to_int(base_param_bytes[file_timestamp_pos:file_timestamp_pos + timestamp_bytes_len])
 
     self._n_keys_pos = n_keys_pos
 
@@ -1174,7 +1175,7 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets):
     init_timestamps_bytes = b'\x00'
 
     self._file_timestamp = make_timestamp_int()
-    file_ts_bytes = int_to_bytes(self._file_timestamp, 6)
+    file_ts_bytes = int_to_bytes(self._file_timestamp, timestamp_bytes_len)
 
     init_write_bytes = uuid_fixed_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes
 
