@@ -229,16 +229,9 @@ def test_prune(file_path):
         old_len = len(f)
         removed_items = f.prune()
         new_len = len(f)
+        test_value = f[2]
 
-    assert (removed_items > 0)  and (old_len > removed_items) and (new_len == old_len)
-
-    timestamp = utils.make_timestamp_int()
-
-    with VariableValue(file_path, 'w') as f:
-        removed_items = f.prune(timestamp=timestamp)
-        new_len = len(f)
-
-    assert (old_len == removed_items) and (new_len == 0)
+    assert (removed_items > 0)  and (old_len > removed_items) and (new_len == old_len) and isinstance(test_value, int)
 
     # Reindex
     with VariableValue(file_path, 'w') as f:
@@ -250,6 +243,16 @@ def test_prune(file_path):
         test_value = f[2]
 
     assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(test_value, int)
+
+    # Remove the rest via timestamp filter
+    timestamp = utils.make_timestamp_int()
+
+    with VariableValue(file_path, 'w') as f:
+        removed_items = f.prune(timestamp=timestamp)
+        new_len = len(f)
+        meta = f.get_metadata()
+
+    assert (old_len == removed_items) and (new_len == 0) and isinstance(meta, dict)
 
 
 @pytest.mark.parametrize("file_path", [file_path1, file_path2])
