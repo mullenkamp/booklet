@@ -52,9 +52,31 @@ class Booklet(MutableMapping):
     """
     Base class
     """
+    def _set_file_timestamp(self, timestamp=None):
+        """
+        Set the timestamp on the file.
+        Accessed by self._file_timestamp
+        """
+        ts_int = utils.make_timestamp_int(timestamp)
+        ts_int_bytes = utils.int_to_bytes(ts_int, 6)
+
+        self._file.seek(utils.file_timestamp_pos)
+        self._file.write(ts_int_bytes)
+
+        self._file_timestamp = ts_int
+
+
+    # def _get_file_timestamp(self):
+    #     """
+    #     Get the timestamp of the file.
+    #     """
+    #     self._file.seek(utils.file_timestamp_pos)
+    #     ts_int_bytes = self._file
+
+
     def set_metadata(self, data, timestamp=None):
         """
-        Sets the metadata for the booklet. The data input must be a json serializable object.
+        Sets the metadata for the booklet. The data input must be a json serializable object. Optionally assign a timestamp.
         """
         if self.writable:
             self.sync()
@@ -69,7 +91,8 @@ class Booklet(MutableMapping):
 
     def get_metadata(self, include_timestamp=False):
         """
-
+        Get the metadata. Optionally include the timestamp in the output.
+        Will return None if no metadata has been assigned.
         """
         output = utils.get_value_ts(self._file, utils.metadata_key_bytes, self._n_buckets, True, include_timestamp, self._ts_bytes_len)
 
@@ -129,6 +152,9 @@ class Booklet(MutableMapping):
             yield self._post_value(value)
 
     def timestamps(self, include_value=False):
+        """
+        Return an iterator for timestamps for all keys. Optionally add values to the iterator.
+        """
         if self._init_timestamps:
             if include_value:
                 for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len):
@@ -170,7 +196,7 @@ class Booklet(MutableMapping):
 
     def get_timestamp(self, key, include_value=False, default=None):
         """
-
+        Get a timestamp associated with a key. Optionally include the value.
         """
         if self._init_timestamps:
             output = utils.get_value_ts(self._file, self._pre_key(key), self._n_buckets, include_value, True, self._ts_bytes_len)
@@ -188,7 +214,7 @@ class Booklet(MutableMapping):
 
     def set_timestamp(self, key, timestamp):
         """
-        timestamp should be an int of the number of microseconds from UTC unix time.
+        Set a timestamp for a specific key. The timestamp must be either an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone.
         """
         if self._init_timestamps:
             if self.writable:
@@ -204,7 +230,8 @@ class Booklet(MutableMapping):
 
     def set(self, key, value, timestamp=None, encode_value=True):
         """
-        timestamp should be an int of the number of microseconds from UTC unix time.
+        Set a key/value pair. Optionally assign a specific timestamp. 
+        The timestamp must be either None, an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone. None will create a timestamp of now.
         """
         if self.writable:
             with self._thread_lock:
@@ -230,9 +257,9 @@ class Booklet(MutableMapping):
             raise ValueError('File is open for read only.')
 
 
-    def prune(self, timestamp: int=None, reindex=False):
+    def prune(self, timestamp=None, reindex=False):
         """
-        Prunes the old keys and associated values. Returns the number of removed items.
+        Prunes the old keys and associated values. Returns the number of removed items. The method can also prune remove keys/values older than the timestamp. The user can also reindex the booklet file. False does no reindexing, True increases the n_buckets to a preassigned value, or an int of the n_buckets. True can only be used if the default n_buckets were used at original initialisation.
         """
         if self.writable:
             with self._thread_lock:
@@ -307,6 +334,9 @@ class Booklet(MutableMapping):
 
 
     def sync(self):
+        """
+        Sync the data buffers to disk. This also occurs when the file is closed. This must occur to ensure the data is persisted to disk.
+        """
         if self.writable:
             with self._thread_lock:
                 if self._buffer_index:
