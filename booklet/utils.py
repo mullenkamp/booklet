@@ -690,7 +690,7 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     return n_keys, removed_count, n_buckets
 
 
-def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size, init_timestamps, tz_offset):
+def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size, init_timestamps):
     """
 
     """

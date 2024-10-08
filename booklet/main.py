@@ -425,7 +425,7 @@ class VariableValue(Booklet):
         """
 
         """
-        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, utils.tz_offset)
+        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps)
 
 
 ### Alias
@@ -558,15 +558,12 @@ class FixedValue(Booklet):
             raise ValueError('File is open for read only.')
 
 
-
-
-
 #####################################################
 ### Default "open" should be the variable length class
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22):
+    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=False):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -615,4 +612,4 @@ def open(
     +---------+-------------------------------------------+
 
     """
-    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size)
+    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps)
