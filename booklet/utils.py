@@ -46,6 +46,7 @@ uuid_variable_blt = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 
 metadata_key_bytes = b'\xad\xb0\x1e\xbc\x1b\xa3C>\xb0CRw\xd1g\x86\xee'
+metadata_key_hash = b"`\x1bF\xbbh\x01\xa9\xb7\x8d\x98\x10k'"
 
 current_version = 4
 current_version_bytes = current_version.to_bytes(2, 'little', signed=False)
@@ -580,6 +581,8 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     """
 
     """
+    metadata_key_added = False
+
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
     init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
 
@@ -645,6 +648,10 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
             key_hash = init_data_block[:key_hash_len]
             write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + value_len_bytes + ts_key_value_bytes
 
+            ## Check if it's the metadata key - remove from n_keys at the end
+            if key_hash == metadata_key_hash:
+                metadata_key_added = True
+
             ## flush write buffer if the size is getting too large
             write_len = len(write_bytes)
             bd_pos = len(buffer_data)
@@ -673,6 +680,9 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
 
     os.ftruncate(file.fileno(), data_block_write_start_pos)
     os.fsync(file.fileno())
+
+    if metadata_key_added:
+        n_keys -= 1
 
     return n_keys, removed_count, n_buckets
 
