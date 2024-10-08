@@ -67,7 +67,7 @@ Write data without using the context manager
 
   import booklet
 
-  db = booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str', n_buckets=12007)
+  db = booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str')
 
   db['test_key'] = ['one', 2, 'three', 4]
   db['2nd_test_key'] = ['five', 6, 'seven', 8]
@@ -86,6 +86,18 @@ Read data without using the context manager
   test_data2 = db['2nd_test_key']
 
   db.close()
+
+
+Prune deleted items
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When a key/value is "deleted", it's actually just flagged internally as deleted and the item is ignored on the following requests. This is the same for keys that get reassigned. To remove these deleted items from the file completely, the user can run the "prune" method. This should only be performed when the user has done a ton of deletes/overwrites as prune can be computationally intensive. There is no performance improvement to removing these items from the file. It's purely to regain space.
+
+.. code:: python
+
+  with booklet.open('test.blt', 'w') as db:
+    del db['test_key']
+    db.sync()
+    db.prune()
 
 
 Custom serializers
@@ -166,11 +178,11 @@ When we find the identical key hash, Booklet reads 6 bytes (key len and value le
 Deletes assign ndbp to 0 and reassign the prior data block it's original ndbp. This essentially just removes this data block from the key hash data block chain.
 A delete also happens when a user "overwrites" the same key.
 
+A "prune" method has been created that allows the user to remove "deleted" items. It has two optional parameters. If timestamps have been initialized in booklet, then the user can pass a timestamp that will remove all items older than that timestamp. The reindexing option allows the user to increase the n_buckets when the number items greatly exceeds the initialized n_buckets. The implementation essentially just clears the original index then iterates through all data blocks and rewrites only the data blocks that haven't been deleted. In the case of the reindexing, it determines the difference between the old index size and the new index size, expands the file by that difference, moves all of the data blocks to the end of the file, and then writes the newer (and longer) index to the file. Then it continues with the normal pruning procedure. 
+
 Limitations
 -----------
-The main limitation is that the user should assign an appropriate n_buckets. This should be approximately the same number as the expected number of keys/values. The default is set at 12007. An automatic re-indexing should come eventually.
-
-There's currently no "prune" method to remove deleted data. This should come eventually too. Since timestamps have now been added, a prune method could optionally remove data older than a certain date. Total data size removal should also be an option.
+The main limitation is that booklet does not have automatic reindexing (increasing the n_buckets). In the current design, reindexing is computationally intensive when the file is large. The user should generally assign an appropriate n_buckets at initialization. This should be approximately the same number as the expected number of keys/values. The default is set at 12007. The "prune" method now has a reindexing option that allows the users to deliberately update/increase the index.
 
 Benchmarks
 -----------
