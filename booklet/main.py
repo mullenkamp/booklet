@@ -14,6 +14,8 @@ import portalocker
 from itertools import count
 from collections import Counter, defaultdict, deque
 import orjson
+import datetime
+import time
 # import weakref
 # from multiprocessing import Manager, shared_memory
 
@@ -36,6 +38,11 @@ from . import utils
 # n_keys_pos = 25
 
 
+
+#######################################################
+### Helper functions
+
+
 #######################################################
 ### Generic class
 
@@ -45,16 +52,38 @@ class Booklet(MutableMapping):
     """
     Base class
     """
+    def _set_file_timestamp(self, timestamp=None):
+        """
+        Set the timestamp on the file.
+        Accessed by self._file_timestamp
+        """
+        ts_int = utils.make_timestamp_int(timestamp)
+        ts_int_bytes = utils.int_to_bytes(ts_int, utils.timestamp_bytes_len)
+
+        self._file.seek(utils.file_timestamp_pos)
+        self._file.write(ts_int_bytes)
+
+        self._file_timestamp = ts_int
+
+
+    # def _get_file_timestamp(self):
+    #     """
+    #     Get the timestamp of the file.
+    #     """
+    #     self._file.seek(utils.file_timestamp_pos)
+    #     ts_int_bytes = self._file
+
+
     def set_metadata(self, data, timestamp=None):
         """
-        Sets the metadata for the booklet. The data input must be a json serializable object.
+        Sets the metadata for the booklet. The data input must be a json serializable object. Optionally assign a timestamp.
         """
         if self.writable:
             self.sync()
             with self._thread_lock:
-                _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp, self._ts_bytes_len)
+                _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, timestamp, self._ts_bytes_len)
                 if self._buffer_index:
-                    utils.flush_data_buffer(self._file, self._buffer_data)
+                    utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
                 _ = utils.update_index(self._file, self._buffer_index, self._n_buckets)
                 self._file.flush()
         else:
@@ -62,7 +91,8 @@ class Booklet(MutableMapping):
 
     def get_metadata(self, include_timestamp=False):
         """
-
+        Get the metadata. Optionally include the timestamp in the output.
+        Will return None if no metadata has been assigned.
         """
         output = utils.get_value_ts(self._file, utils.metadata_key_bytes, self._n_buckets, True, include_timestamp, self._ts_bytes_len)
 
@@ -122,6 +152,9 @@ class Booklet(MutableMapping):
             yield self._post_value(value)
 
     def timestamps(self, include_value=False):
+        """
+        Return an iterator for timestamps for all keys. Optionally add values to the iterator.
+        """
         if self._init_timestamps:
             if include_value:
                 for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len):
@@ -163,7 +196,7 @@ class Booklet(MutableMapping):
 
     def get_timestamp(self, key, include_value=False, default=None):
         """
-
+        Get a timestamp associated with a key. Optionally include the value.
         """
         if self._init_timestamps:
             output = utils.get_value_ts(self._file, self._pre_key(key), self._n_buckets, include_value, True, self._ts_bytes_len)
@@ -181,7 +214,7 @@ class Booklet(MutableMapping):
 
     def set_timestamp(self, key, timestamp):
         """
-        timestamp should be an int of the number of microseconds from UTC unix time.
+        Set a timestamp for a specific key. The timestamp must be either an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone.
         """
         if self._init_timestamps:
             if self.writable:
@@ -197,13 +230,14 @@ class Booklet(MutableMapping):
 
     def set(self, key, value, timestamp=None, encode_value=True):
         """
-        timestamp should be an int of the number of microseconds from UTC unix time.
+        Set a key/value pair. Optionally assign a specific timestamp. 
+        The timestamp must be either None, an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone. None will create a timestamp of now.
         """
         if self.writable:
             with self._thread_lock:
                 if encode_value:
                     value = self._pre_value(value)
-                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp, self._ts_bytes_len)
+                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, timestamp, self._ts_bytes_len)
                 self._n_keys += n_extra_keys
         else:
             raise ValueError('File is open for read only.')
@@ -216,24 +250,31 @@ class Booklet(MutableMapping):
         if self.writable:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, None, self._ts_bytes_len)
+                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, None, self._ts_bytes_len)
                     self._n_keys += n_extra_keys
 
         else:
             raise ValueError('File is open for read only.')
 
 
-    # def prune(self):
-    #     """
-    #     Prunes the old keys and associated values. Returns the recovered space in bytes.
-    #     """
-    #     if self.writable:
-    #         with self._thread_lock:
-    #             recovered_space = utils.prune_file(self._file, self._index_mmap, self._n_buckets, self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._index_n_bytes_skip)
-    #     else:
-    #         raise ValueError('File is open for read only.')
+    def prune(self, timestamp=None, reindex=False):
+        """
+        Prunes the old keys and associated values. Returns the number of removed items. The method can also prune remove keys/values older than the timestamp. The user can also reindex the booklet file. False does no reindexing, True increases the n_buckets to a preassigned value, or an int of the n_buckets. True can only be used if the default n_buckets were used at original initialisation.
+        """
+        if self.writable:
+            with self._thread_lock:
+                n_keys, removed_count, n_buckets = utils.prune_file(self._file, timestamp, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index)
+                self._n_keys = n_keys
 
-    #     return recovered_space
+                if n_buckets != self._n_buckets:
+                    self._n_buckets = n_buckets
+                    self._file.seek(21)
+                    self._file.write(utils.int_to_bytes(n_buckets, 4))
+                    self._file.flush()
+
+                return removed_count
+        else:
+            raise ValueError('File is open for read only.')
 
 
     def __getitem__(self, key):
@@ -293,10 +334,13 @@ class Booklet(MutableMapping):
 
 
     def sync(self):
+        """
+        Sync the data buffers to disk. This also occurs when the file is closed. This must occur to ensure the data is persisted to disk.
+        """
         if self.writable:
             with self._thread_lock:
                 if self._buffer_index:
-                    utils.flush_data_buffer(self._file, self._buffer_data)
+                    utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
                 self._sync_index()
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
@@ -442,7 +486,7 @@ class FixedValue(Booklet):
         """
 
         """
-        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size)
+        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, utils.tz_offset)
 
 
     def keys(self):
@@ -514,15 +558,12 @@ class FixedValue(Booklet):
             raise ValueError('File is open for read only.')
 
 
-
-
-
 #####################################################
 ### Default "open" should be the variable length class
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22):
+    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=False):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -571,4 +612,4 @@ def open(
     +---------+-------------------------------------------+
 
     """
-    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size)
+    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps)
