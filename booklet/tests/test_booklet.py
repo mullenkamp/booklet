@@ -8,7 +8,7 @@ Created on Sun Mar 10 13:55:17 2024
 import pytest
 import io
 import os
-from booklet import __version__, FixedValue, VariableValue, utils
+from booklet import __version__, FixedValue, VariableValue, utils, make_timestamp_int
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
@@ -31,7 +31,8 @@ data_dict2 = deepcopy(data_dict)
 
 meta = {'test1': 'data'}
 
-file_path = file_path1
+file_path = file_path2
+data = deepcopy(data_dict)
 
 ##############################################
 ### Functions
@@ -222,18 +223,6 @@ def test_values(file_path):
             assert source_value == value
 
 
-# def test_prune():
-#     with VariableValue(file_path, 'w') as f:
-#         recovered_space = f.prune()
-
-#     assert recovered_space > 0
-
-#     with VariableValue(file_path) as f:
-#         for key, source_value in data_dict.items():
-#             value = f[key]
-#             assert source_value == value
-
-
 @pytest.mark.parametrize("file_path", [file_path1, file_path2])
 def test_set_items_get_items(file_path):
     with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
@@ -251,6 +240,24 @@ def test_set_items_get_items(file_path):
         value = f[10]
         assert value == data_dict[10]
 
+
+def test_prune():
+    with VariableValue(file_path2, 'w') as f:
+        old_len = len(f)
+        old_n_buckets = f._n_buckets
+        removed_items = f.prune()
+        n_buckets = f._n_buckets
+
+    assert (removed_items > 0)  and (old_len > removed_items) and (n_buckets > old_n_buckets)
+
+    leftover_items = old_len - removed_items
+
+    timestamp = make_timestamp_int
+
+    with VariableValue(file_path2, 'w') as f:
+        removed_items = f.prune(timestamp=timestamp)
+
+    assert leftover_items == removed_items
 
 # def test_reindex():
 #     """

@@ -174,5 +174,5 @@ There's currently no "prune" method to remove deleted data. This should come eve
 
 Benchmarks
 -----------
-From my initial tests, the performance is comparable to other very fast key-value databases (e.g. gdbm, lmdb).
+From my initial tests, the performance is comparable to other very fast key-value databases (e.g. gdbm, lmdb) and faster than sqlitedict.
 

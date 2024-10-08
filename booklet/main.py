@@ -14,6 +14,8 @@ import portalocker
 from itertools import count
 from collections import Counter, defaultdict, deque
 import orjson
+import datetime
+import time
 # import weakref
 # from multiprocessing import Manager, shared_memory
 
@@ -24,8 +26,8 @@ import orjson
 #     fcntl_import = False
 
 
-# import utils
-from . import utils
+import utils
+# from . import utils
 
 # import serializers
 # from . import serializers
@@ -34,6 +36,11 @@ from . import utils
 # page_size = mmap.ALLOCATIONGRANULARITY
 
 # n_keys_pos = 25
+
+
+
+#######################################################
+### Helper functions
 
 
 #######################################################
@@ -54,7 +61,7 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp, self._ts_bytes_len)
                 if self._buffer_index:
-                    utils.flush_data_buffer(self._file, self._buffer_data)
+                    utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
                 _ = utils.update_index(self._file, self._buffer_index, self._n_buckets)
                 self._file.flush()
         else:
@@ -203,7 +210,7 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 if encode_value:
                     value = self._pre_value(value)
-                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp, self._ts_bytes_len)
+                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, timestamp, self._ts_bytes_len)
                 self._n_keys += n_extra_keys
         else:
             raise ValueError('File is open for read only.')
@@ -216,24 +223,31 @@ class Booklet(MutableMapping):
         if self.writable:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, None, self._ts_bytes_len)
+                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, None, self._ts_bytes_len)
                     self._n_keys += n_extra_keys
 
         else:
             raise ValueError('File is open for read only.')
 
 
-    # def prune(self):
-    #     """
-    #     Prunes the old keys and associated values. Returns the recovered space in bytes.
-    #     """
-    #     if self.writable:
-    #         with self._thread_lock:
-    #             recovered_space = utils.prune_file(self._file, self._index_mmap, self._n_buckets, self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._index_n_bytes_skip)
-    #     else:
-    #         raise ValueError('File is open for read only.')
+    def prune(self, timestamp: int=None, reindex=False):
+        """
+        Prunes the old keys and associated values. Returns the number of removed items.
+        """
+        if self.writable:
+            with self._thread_lock:
+                n_keys, removed_count, n_buckets = utils.prune_file(self._file, timestamp, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index)
+                self._n_keys = n_keys
 
-    #     return recovered_space
+                if n_buckets != self._n_buckets:
+                    self._n_buckets = n_buckets
+                    self._file.seek(21)
+                    self._file.write(utils.int_to_bytes(n_buckets, 4))
+                    self._file.flush()
+
+                return removed_count
+        else:
+            raise ValueError('File is open for read only.')
 
 
     def __getitem__(self, key):
@@ -296,7 +310,7 @@ class Booklet(MutableMapping):
         if self.writable:
             with self._thread_lock:
                 if self._buffer_index:
-                    utils.flush_data_buffer(self._file, self._buffer_data)
+                    utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
                 self._sync_index()
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
@@ -381,7 +395,7 @@ class VariableValue(Booklet):
         """
 
         """
-        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps)
+        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, utils.tz_offset)
 
 
 ### Alias
@@ -442,7 +456,7 @@ class FixedValue(Booklet):
         """
 
         """
-        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size)
+        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, utils.tz_offset)
 
 
     def keys(self):
