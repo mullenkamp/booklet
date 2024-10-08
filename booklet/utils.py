@@ -637,20 +637,21 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
         if next_data_block_pos: # A value of 0 means it was deleted
             ts_key_value_bytes = file.read(ts_key_value_len)
 
-            # timestamp filter
-            if timestamp and ts_bytes_len:
+            key_hash = init_data_block[:key_hash_len]
+
+            # Check if it's the metadata key - remove from n_keys at the end
+            if key_hash == metadata_key_hash:
+                metadata_key_added = True
+
+            # timestamp filter - don't remove metadata even if older
+            elif timestamp and ts_bytes_len:
                 ts_int = bytes_to_int(ts_key_value_bytes[:ts_bytes_len])
                 if ts_int < timestamp:
                     data_block_read_start_pos += init_data_block_len + ts_key_value_len
                     removed_count += 1
                     continue
 
-            key_hash = init_data_block[:key_hash_len]
             write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + value_len_bytes + ts_key_value_bytes
-
-            ## Check if it's the metadata key - remove from n_keys at the end
-            if key_hash == metadata_key_hash:
-                metadata_key_added = True
 
             ## flush write buffer if the size is getting too large
             write_len = len(write_bytes)
