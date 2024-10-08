@@ -8,7 +8,7 @@ Created on Sun Mar 10 13:55:17 2024
 import pytest
 import io
 import os
-from booklet import __version__, FixedValue, VariableValue, utils, make_timestamp_int
+from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
@@ -64,7 +64,7 @@ for index in indexes:
 
         # f.sync()
 
-        new_len = len(f)
+        # new_len = len(f)
 
         try:
             _ = f[index]
@@ -77,15 +77,14 @@ for index in indexes:
 
 self = VariableValue(file_path1, 'w')
 # self[97] = 97*2
-self.sync()
+# self.sync()
 file = self._file
 buffer_data = self._buffer_data
 buffer_index = self._buffer_index
 
 self.prune()
 self.prune(reindex=True)
-self.prune(max_size=max_size)
-timestamp = make_timestamp_int()
+timestamp = utils.make_timestamp_int()
 self.prune(timestamp=timestamp)
 
 self.close()

@@ -24,8 +24,8 @@ import pathlib
 import orjson
 # from time import time
 
-import serializers
-# from . import serializers
+# import serializers
+from . import serializers
 
 ############################################
 ### Parameters
@@ -618,7 +618,7 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     ## Iter through data blocks and only add the non-deleted ones
     # written_n_bytes = 0
     removed_count = 0
-    while file.tell() < file_len:
+    while data_block_read_start_pos < file_len:
         file.seek(data_block_read_start_pos)
         init_data_block = file.read(init_data_block_len)
 

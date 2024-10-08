@@ -8,7 +8,7 @@ Created on Sun Mar 10 13:55:17 2024
 import pytest
 import io
 import os
-from booklet import __version__, FixedValue, VariableValue, utils, make_timestamp_int
+from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
@@ -241,43 +241,32 @@ def test_set_items_get_items(file_path):
         assert value == data_dict[10]
 
 
+@pytest.mark.parametrize("file_path", [file_path2])
 def test_prune():
-    with VariableValue(file_path2, 'w') as f:
+    with VariableValue(file_path, 'w') as f:
+        old_len = len(f)
+        removed_items = f.prune()
+        new_len = len(f)
+
+    assert (removed_items > 0)  and (old_len > removed_items) and (new_len == old_len)
+
+    timestamp = utils.make_timestamp_int()
+
+    with VariableValue(file_path, 'w') as f:
+        removed_items = f.prune(timestamp=timestamp)
+        new_len = len(f)
+
+    assert (old_len == removed_items) and (new_len == 0)
+
+    # Reindex
+    with VariableValue(file_path, 'w') as f:
         old_len = len(f)
         old_n_buckets = f._n_buckets
-        removed_items = f.prune()
-        n_buckets = f._n_buckets
+        removed_items = f.prune(reindex=True)
+        new_n_buckets = f._n_buckets
+        new_len = len(f)
 
-    assert (removed_items > 0)  and (old_len > removed_items) and (n_buckets > old_n_buckets)
-
-    leftover_items = old_len - removed_items
-
-    timestamp = make_timestamp_int
-
-    with VariableValue(file_path2, 'w') as f:
-        removed_items = f.prune(timestamp=timestamp)
-
-    assert leftover_items == removed_items
-
-# def test_reindex():
-#     """
-
-#     """
-#     with VariableValue(file_path, 'w') as f:
-#         old_n_buckets = f._n_buckets
-#         for i in range(old_n_buckets*11):
-#             f[21+i] = i
-
-#         f.sync()
-#         value = f[21]
-
-#     assert value == 0
-
-#     with VariableValue(file_path) as f:
-#         new_n_buckets = f._n_buckets
-#         value = f[21]
-
-#     assert (new_n_buckets > 20000) and (value == 0)
+    assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(f[2], int)
 
 
 ## Always make this last!!!
