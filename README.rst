@@ -100,6 +100,22 @@ When a key/value is "deleted", it's actually just flagged internally as deleted 
     db.prune()
 
 
+File metadata
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The user can assign overall metadata to the file as a json serializable object (i.e. dict or list). The methods are called set_metadata and get_metadata. The metadata is independent from all of the other key/value pairs assigned in the normal way. It won't be returned with any other methods. If metadata has not already been assigned, the get_metadata method will return None.
+
+.. code:: python
+
+  with booklet.open('test.blt', 'w') as db:
+    db.set_metadata({'meta_key1': 'This is stored as metadata'})
+    meta = db.get_metadata()
+
+
+Item timestamps
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Timestamps associated with each assigned item have been implemented, but must be turned on at file initialization. By default it's off. The timestamps are stored and returned as an int of the number of microseconds in POSIX UTC time. There are new methods to set and get the timestamps. It's quite new...so I won't supply more info until it's further tested.
+
+
 Custom serializers
 ~~~~~~~~~~~~~~~~~~
 .. code:: python
