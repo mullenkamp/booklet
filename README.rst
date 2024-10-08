@@ -6,9 +6,7 @@ Introduction
 Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. Booklet uses the `MutableMapping <https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes>`_ class API which is the same as python's dictionary in addition to some `dbm <https://docs.python.org/3/library/dbm.html>`_ methods (i.e. sync and prune).
 It is thread-safe (using thread locks on writes) and multiprocessing-safe (using file locks).
 
-Deletes do not remove data from the file directly. Similarly, reassigning a value to an existing key adds a new key/value set to the file. During normal usage, the user will not notice a difference when requesting a key/value set, but the file size will grow. If size becomes an issue because of lots of deletes or reassignments, then the user should create a new file by iterating through the original.
-
-When an error occurs and is caught by the module (e.g. trying to access a key that doesn't exist), booklet will properly close the file and remove the file locks. This will not sync any changes, so the user will lose any changes that were not synced. There will be errors that can occur that are not caught and in these circumstances there are no guarantees for what happens to the file.
+When an error occurs (e.g. trying to access a key that doesn't exist), booklet will properly close the file and remove the file locks. This will not sync any changes, so the user will lose any changes that were not synced. There will be circumstances that can occur that will not properly close the file, so care still needs to be made.
 
 Installation
 ------------
