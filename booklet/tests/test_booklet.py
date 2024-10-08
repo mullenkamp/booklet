@@ -223,24 +223,6 @@ def test_values(file_path):
             assert source_value == value
 
 
-@pytest.mark.parametrize("file_path", [file_path1, file_path2])
-def test_set_items_get_items(file_path):
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
-        for key, value in data_dict.items():
-            f[key] = value
-
-    with VariableValue(file_path, 'w') as f:
-        f[50] = [0, 0]
-        value = f[10]
-
-    with VariableValue(file_path) as f:
-        value = f[50]
-        assert value == [0, 0]
-
-        value = f[10]
-        assert value == data_dict[10]
-
-
 @pytest.mark.parametrize("file_path", [file_path2])
 def test_prune(file_path):
     with VariableValue(file_path, 'w') as f:
@@ -268,6 +250,24 @@ def test_prune(file_path):
 
     assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(f[2], int)
 
+
+@pytest.mark.parametrize("file_path", [file_path1, file_path2])
+def test_set_items_get_items(file_path):
+    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+        for key, value in data_dict.items():
+            f[key] = value
+
+    with VariableValue(file_path, 'w') as f:
+        f[50] = [0, 0]
+        value = f[10]
+
+    with VariableValue(file_path) as f:
+        value = f[50]
+        assert value == [0, 0]
+
+        value = f[10]
+        assert value == data_dict[10]
+        
 
 ## Always make this last!!!
 @pytest.mark.parametrize("file_path", [file_path1, file_path2])

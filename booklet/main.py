@@ -26,8 +26,8 @@ import time
 #     fcntl_import = False
 
 
-# import utils
-from . import utils
+import utils
+# from . import utils
 
 # import serializers
 # from . import serializers
@@ -59,7 +59,7 @@ class Booklet(MutableMapping):
         if self.writable:
             self.sync()
             with self._thread_lock:
-                _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, self._tz_offset, timestamp, self._ts_bytes_len)
+                _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size, timestamp, self._ts_bytes_len)
                 if self._buffer_index:
                     utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
                 _ = utils.update_index(self._file, self._buffer_index, self._n_buckets)
