@@ -247,8 +247,9 @@ def test_prune(file_path):
         removed_items = f.prune(reindex=True)
         new_n_buckets = f._n_buckets
         new_len = len(f)
+        test_value = f[2]
 
-    assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(f[2], int)
+    assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(test_value, int)
 
 
 @pytest.mark.parametrize("file_path", [file_path1, file_path2])
