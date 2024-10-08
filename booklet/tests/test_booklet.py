@@ -242,7 +242,7 @@ def test_set_items_get_items(file_path):
 
 
 @pytest.mark.parametrize("file_path", [file_path2])
-def test_prune():
+def test_prune(file_path):
     with VariableValue(file_path, 'w') as f:
         old_len = len(f)
         removed_items = f.prune()
