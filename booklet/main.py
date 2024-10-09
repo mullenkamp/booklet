@@ -421,11 +421,11 @@ class VariableValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=False):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
         """
 
         """
-        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps)
+        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)
 
 
 ### Alias
@@ -482,11 +482,11 @@ class FixedValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, buffer_size: int = 2**22):
+    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, buffer_size: int = 2**22, init_bytes=None):
         """
 
         """
-        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, utils.tz_offset)
+        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, init_bytes)
 
 
     def keys(self):
@@ -526,17 +526,24 @@ class FixedValue(Booklet):
             raise ValueError('File is open for read only.')
 
 
-    # def prune(self):
-    #     """
-    #     Prunes the old keys and associated values. Returns the recovered space in bytes.
-    #     """
-    #     if self.writable:
-    #         with self._thread_lock:
-    #             recovered_space = utils.prune_file_fixed(self._file, self._index_mmap, self._n_buckets, self._n_bytes_index, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._index_n_bytes_skip)
-    #     else:
-    #         raise ValueError('File is open for read only.')
+    def prune(self, reindex=False):
+        """
+        Prunes the old keys and associated values. Returns the recovered space in bytes.
+        """
+        if self.writable:
+            with self._thread_lock:
+                n_keys, removed_count, n_buckets = utils.prune_file_fixed(self._file, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index)
+                self._n_keys = n_keys
 
-    #     return recovered_space
+                if n_buckets != self._n_buckets:
+                    self._n_buckets = n_buckets
+                    self._file.seek(21)
+                    self._file.write(utils.int_to_bytes(n_buckets, 4))
+                    self._file.flush()
+
+                return removed_count
+        else:
+            raise ValueError('File is open for read only.')
 
 
     def __getitem__(self, key):
@@ -563,7 +570,7 @@ class FixedValue(Booklet):
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=False):
+    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -612,4 +619,4 @@ def open(
     +---------+-------------------------------------------+
 
     """
-    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps)
+    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)
