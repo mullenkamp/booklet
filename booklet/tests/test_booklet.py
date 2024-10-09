@@ -100,6 +100,18 @@ with VariableValue(file_path2, 'n', key_serializer='uint4', value_serializer='pi
         f[key] = value
 
 
+def test_init_bytes_input():
+    """
+
+    """
+    with io.open(file_path2, 'rb') as f:
+        init_bytes = f.read(200)
+
+    with VariableValue(file_path2, 'n', init_bytes=init_bytes) as f:
+        for key, value in data_dict.items():
+            f[key] = value
+
+
 @pytest.mark.parametrize("file_path", [file_path1, file_path2])
 def test_set_get_metadata(file_path):
     """
@@ -121,7 +133,7 @@ def test_set_get_metadata(file_path):
 def test_set_get_timestamp(file_path):
     with VariableValue(file_path, 'w') as f:
         ts_old, value = f.get_timestamp(10, True)
-        ts_new = int((time.time() + f._tz_offset) * 1000000)
+        ts_new = int((time.time() + utils.tz_offset) * 1000000)
         f.set_timestamp(10, ts_new)
 
     with VariableValue(file_path) as f:
@@ -155,7 +167,7 @@ def test_timestamps(file_path):
             source_value = data_dict[key]
             assert source_value == value
 
-        ts_new = int((time.time() + f._tz_offset) * 1000000)
+        ts_new = int((time.time() + utils.tz_offset) * 1000000)
         for key, ts in f.timestamps():
             assert ts_new > ts
 
@@ -329,6 +341,18 @@ def test_threading_writes_fixed():
     assert value == data_dict2[10]
 
 
+def test_init_bytes_input_fixed():
+    """
+
+    """
+    with io.open(file_path, 'rb') as f:
+        init_bytes = f.read(200)
+
+    with FixedValue(file_path, 'n', init_bytes=init_bytes) as f:
+        for key, value in data_dict2.items():
+            f[key] = value
+
+
 def test_keys_fixed():
     with FixedValue(file_path) as f:
         keys = set(list(f.keys()))
@@ -339,7 +363,7 @@ def test_keys_fixed():
 
     with FixedValue(file_path) as f:
         for key in keys:
-            val = f[key]
+            _ = f[key]
 
 
 def test_items_fixed():
@@ -398,14 +422,25 @@ def test_values_fixed():
             assert source_value == value
 
 
-# def test_prune_fixed():
-#     with FixedValue(file_path, 'w') as f:
-#         f.prune()
+def test_prune_fixed():
+    with FixedValue(file_path, 'w') as f:
+        old_len = len(f)
+        removed_items = f.prune()
+        new_len = len(f)
+        test_value = f[2]
 
-#     with FixedValue(file_path) as f:
-#         for key, source_value in data_dict2.items():
-#             value = f[key]
-#             assert source_value == value
+    assert (removed_items > 0)  and (old_len > removed_items) and (new_len == old_len) and isinstance(test_value, bytes)
+
+    # Reindex
+    with FixedValue(file_path, 'w') as f:
+        old_len = len(f)
+        old_n_buckets = f._n_buckets
+        removed_items = f.prune(reindex=True)
+        new_n_buckets = f._n_buckets
+        new_len = len(f)
+        test_value = f[2]
+
+    assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(test_value, bytes)
 
 
 def test_set_items_get_items_fixed():

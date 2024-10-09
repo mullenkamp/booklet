@@ -37,6 +37,8 @@ n_keys_pos = 33
 file_timestamp_pos = 42
 timestamp_bytes_len = 7
 
+n_keys_crash = 4294967295
+
 # n_bytes_index = 4
 n_bytes_file = 6
 n_bytes_key = 2
@@ -690,7 +692,7 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     return n_keys, removed_count, n_buckets
 
 
-def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size, init_timestamps):
+def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size, init_timestamps, init_bytes):
     """
 
     """
@@ -714,9 +716,6 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
     self.writable = write
     self._write_buffer_size = write_buffer_size
-
-    ## TZ offset
-    self._tz_offset = tz_offset
 
     # self._platform = sys.platform
 
@@ -777,9 +776,9 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
                 raise ValueError('File is an older version.')
 
         ## Check the n_keys
-        if self._n_keys == (256**4) - 1:
+        if self._n_keys == n_keys_crash:
             if write:
-                print('File must have been closed incorrectly...rebuilding the n_keys...')
+                # print('File must have been closed incorrectly...rebuilding the n_keys...')
                 counter = count()
                 deque(zip(self.keys(), counter), maxlen=0)
 
@@ -791,18 +790,35 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         if not write:
             raise FileNotFoundError('File was requested to be opened as read-only, but no file exists.')
 
-        if isinstance(n_buckets, int):
+        # if isinstance(n_buckets, int):
+        #     self._n_buckets = n_buckets
+        # else:
+        #     self._n_buckets = init_n_buckets
+
+        ## If init_bytes are passed, then parse bytes
+        if isinstance(init_bytes, (bytes, bytearray)):
+            init_bytes = bytearray(init_bytes)
+            read_base_params_variable(self, init_bytes, key_serializer, value_serializer)
+            # 0 out the n_keys
+            init_bytes[n_keys_pos:n_keys_pos+4] = int_to_bytes(0, 4)
+        else:
+            file_timestamp = make_timestamp_int()
+    
+            init_bytes = init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp)
+
             self._n_buckets = n_buckets
-        else:
-            self._n_buckets = init_n_buckets
+            self._init_timestamps = init_timestamps
+            if self._init_timestamps:
+                self._ts_bytes_len = timestamp_bytes_len
+            else:
+                self._ts_bytes_len = 0
 
-        init_write_bytes = init_base_params_variable(self, key_serializer, value_serializer, self._n_buckets, init_timestamps)
+        self._n_bytes_file = n_bytes_file
+        self._n_bytes_key = n_bytes_key
+        self._n_bytes_value = n_bytes_value
 
-        self._init_timestamps = init_timestamps
-        if self._init_timestamps:
-            self._ts_bytes_len = timestamp_bytes_len
-        else:
-            self._ts_bytes_len = 0
+        self._n_keys = 0
+        self._n_keys_pos = n_keys_pos
 
         self._file = io.open(fp, 'w+b', buffering=0)
         # self._fd = self._file.fileno()
@@ -818,7 +834,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
         ## Write new file
         with self._thread_lock:
-            self._file.write(init_write_bytes)
+            self._file.write(init_bytes)
 
             write_init_bucket_indexes(self._file, self._n_buckets, sub_index_init_pos, write_buffer_size)
             # self._file.flush()
@@ -828,7 +844,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             # self._file_mmap.resize(sub_index_init_pos + (self._n_buckets * n_bytes_file))
 
     ## Create finalizer
-    self._finalizer = weakref.finalize(self, close_files, self._file, (256**4) - 1, self._n_keys_pos, self.writable)
+    self._finalizer = weakref.finalize(self, close_files, self._file, n_keys_crash, self._n_keys_pos, self.writable)
 
 
 def copy_file_range(fsrc, fdst, count, offset_src, offset_dst, write_buffer_size):
@@ -874,8 +890,8 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
     self._n_buckets = bytes_to_int(base_param_bytes[21:25])
     # self._n_bytes_index = bytes_to_int(base_param_bytes[25:29])
     saved_value_serializer = bytes_to_int(base_param_bytes[29:31])
-    saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
-    self._n_keys = bytes_to_int(base_param_bytes[33:37])
+    saved_key_serializer = bytes_to_int(base_param_bytes[31:n_keys_pos])
+    self._n_keys = bytes_to_int(base_param_bytes[n_keys_pos:n_keys_pos+4])
     # self._value_len = bytes_to_int(base_param_bytes[37:41])
     self._init_timestamps = base_param_bytes[41]
     if self._init_timestamps:
@@ -915,7 +931,7 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps):
+def init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp):
     """
 
     """
@@ -948,14 +964,6 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets,
         raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())), self)
 
     ## Write uuid, version, and other parameters and save encodings to new file
-    # self._n_bytes_index = n_bytes_index
-    self._n_bytes_file = n_bytes_file
-    self._n_bytes_key = n_bytes_key
-    self._n_bytes_value = n_bytes_value
-    self._n_buckets = n_buckets
-    self._n_keys = 0
-    self._n_keys_pos = n_keys_pos
-
     n_bytes_file_bytes = int_to_bytes(n_bytes_file, 1)
     n_bytes_key_bytes = int_to_bytes(n_bytes_key, 1)
     n_bytes_value_bytes = int_to_bytes(n_bytes_value, 1)
@@ -970,8 +978,7 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets,
     else:
         init_timestamps_bytes = b'\x00'
 
-    self._file_timestamp = make_timestamp_int()
-    file_ts_bytes = int_to_bytes(self._file_timestamp, timestamp_bytes_len)
+    file_ts_bytes = int_to_bytes(file_timestamp, timestamp_bytes_len)
 
     init_write_bytes = uuid_variable_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes
 
@@ -985,7 +992,7 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets,
 ### Fixed value alternative functions
 
 
-def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, write_buffer_size, tz_offset):
+def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, write_buffer_size, init_bytes):
     """
 
     """
@@ -1049,7 +1056,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         read_base_params_fixed(self, base_param_bytes, key_serializer)
 
         ## Check the n_keys
-        if self._n_keys == (256**4) - 1:
+        if self._n_keys == n_keys_crash:
             if write:
                 # print('File must have been closed incorrectly...rebuilding the n_keys...')
                 counter = count()
@@ -1064,15 +1071,35 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         if not write:
             raise FileNotFoundError('File was requested to be opened as read-only, but no file exists.')
 
-        if value_len is None:
-            raise ValueError('value_len must be an int > 0.')
+        # if isinstance(n_buckets, int):
+        #     self._n_buckets = n_buckets
+        # else:
+        #     self._n_buckets = init_n_buckets
 
-        if isinstance(n_buckets, int):
-            self._n_buckets = n_buckets
+        ## If init_bytes are passed, then parse bytes
+        if isinstance(init_bytes, (bytes, bytearray)):
+            init_bytes = bytearray(init_bytes)
+            read_base_params_fixed(self, init_bytes, key_serializer)
+            # 0 out the n_keys
+            init_bytes[n_keys_pos:n_keys_pos+4] = int_to_bytes(0, 4)
         else:
-            self._n_buckets = init_n_buckets
+            if value_len is None:
+                raise ValueError('value_len must be an int > 0.')
 
-        init_write_bytes = init_base_params_fixed(self, key_serializer, value_len, self._n_buckets)
+            file_timestamp = make_timestamp_int()
+    
+            init_bytes = init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp)
+
+            self._n_buckets = n_buckets
+            self._value_len = value_len
+            self._init_timestamps = 0
+            self._ts_bytes_len = 0
+
+        self._n_bytes_file = n_bytes_file
+        self._n_bytes_key = n_bytes_key
+
+        self._n_keys = 0
+        self._n_keys_pos = n_keys_pos
 
         self._file = io.open(fp, 'w+b', buffering=0)
         # self._fd = self._file.fileno()
@@ -1088,12 +1115,12 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
 
         ## Write new file
         with self._thread_lock:
-            self._file.write(init_write_bytes)
+            self._file.write(init_bytes)
 
             write_init_bucket_indexes(self._file, self._n_buckets, sub_index_init_pos, write_buffer_size)
 
     ## Create finalizer
-    self._finalizer = weakref.finalize(self, close_files, self._file, (256**4) - 1, self._n_keys_pos, self.writable)
+    self._finalizer = weakref.finalize(self, close_files, self._file, n_keys_crash, self._n_keys_pos, self.writable)
 
 
 def read_base_params_fixed(self, base_param_bytes, key_serializer):
@@ -1106,8 +1133,8 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
     self._n_buckets = bytes_to_int(base_param_bytes[21:25])
     # self._n_bytes_index = bytes_to_int(base_param_bytes[25:29])
     # saved_value_serializer = bytes_to_int(base_param_bytes[29:31])
-    saved_key_serializer = bytes_to_int(base_param_bytes[31:33])
-    self._n_keys = bytes_to_int(base_param_bytes[33:37])
+    saved_key_serializer = bytes_to_int(base_param_bytes[31:n_keys_pos])
+    self._n_keys = bytes_to_int(base_param_bytes[n_keys_pos:n_keys_pos+4])
     self._value_len = bytes_to_int(base_param_bytes[37:41])
     self._init_timestamps = base_param_bytes[41]
     self._ts_bytes_len = 0
@@ -1132,7 +1159,7 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_base_params_fixed(self, key_serializer, value_len, n_buckets):
+def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp):
     """
 
     """
@@ -1154,14 +1181,6 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets):
         raise ValueError('key serializer must be one of None, {}, or a serializer class with dumps and loads methods.'.format(', '.join(serializers.serial_name_dict.keys())), self)
 
     ## Write uuid, version, and other parameters and save encodings to new file
-    # self._n_bytes_index = n_bytes_index
-    self._n_bytes_file = n_bytes_file
-    self._n_bytes_key = n_bytes_key
-    self._value_len = value_len
-    self._n_buckets = n_buckets
-    self._n_keys = 0
-    self._n_keys_pos = n_keys_pos
-
     n_bytes_file_bytes = int_to_bytes(n_bytes_file, 1)
     n_bytes_key_bytes = int_to_bytes(n_bytes_key, 1)
     value_len_bytes = int_to_bytes(value_len, 4)
@@ -1174,8 +1193,7 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets):
 
     init_timestamps_bytes = b'\x00'
 
-    self._file_timestamp = make_timestamp_int()
-    file_ts_bytes = int_to_bytes(self._file_timestamp, timestamp_bytes_len)
+    file_ts_bytes = int_to_bytes(file_timestamp, timestamp_bytes_len)
 
     init_write_bytes = uuid_fixed_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes
 
@@ -1321,7 +1339,105 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
 #     return removed_n_bytes
 
 
+def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_len, write_buffer_size, buffer_data, buffer_index):
+    """
 
+    """
+    metadata_key_added = False
+
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    init_data_block_len = one_extra_index_bytes_len + n_bytes_key
+
+    file_len = file.seek(0, 2)
+    data_block_read_start_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+    total_data_size = file_len - data_block_read_start_pos
+    data_block_write_start_pos = data_block_read_start_pos
+    n_keys = 0
+
+    ## Reindex if required
+    if reindex:
+        if isinstance(reindex, bool):
+            if n_buckets not in n_buckets_reindex:
+                raise ValueError('The existing n_buckets was not the original default value. If a non-default value is originally used, then the reindex value must be an int.')
+            new_n_buckets = n_buckets_reindex[n_buckets]
+        elif isinstance(reindex, int):
+            new_n_buckets = reindex
+        else:
+            raise TypeError('reindex must be either a bool or an int.')
+
+        if new_n_buckets:
+            data_block_write_start_pos = sub_index_init_pos + (new_n_buckets * n_bytes_file)
+            extra_bytes = data_block_write_start_pos - data_block_read_start_pos
+            file_len = file_len + extra_bytes
+            os.ftruncate(file.fileno(), file_len)
+
+            # Move old data blocks to the end of the new file
+            copy_file_range(file, file, total_data_size, data_block_read_start_pos, data_block_write_start_pos, write_buffer_size)
+
+            data_block_read_start_pos = data_block_write_start_pos
+            n_buckets = new_n_buckets
+
+    ## Clear bucket indexes
+    write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
+
+    ## Iter through data blocks and only add the non-deleted ones
+    # written_n_bytes = 0
+    removed_count = 0
+    while data_block_read_start_pos < file_len:
+        file.seek(data_block_read_start_pos)
+        init_data_block = file.read(init_data_block_len)
+
+        next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+
+        key_len_bytes = init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key]
+        key_len = bytes_to_int(key_len_bytes)
+
+        key_value_len = key_len + value_len
+        # key_value_bytes = file.read(key_value_len)
+        if next_data_block_pos: # A value of 0 means it was deleted
+            key_value_bytes = file.read(key_value_len)
+
+            key_hash = init_data_block[:key_hash_len]
+
+            # Check if it's the metadata key - remove from n_keys at the end
+            if key_hash == metadata_key_hash:
+                metadata_key_added = True
+
+            write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + key_value_bytes
+
+            ## flush write buffer if the size is getting too large
+            write_len = len(write_bytes)
+            bd_pos = len(buffer_data)
+
+            bd_space = write_buffer_size - bd_pos
+            if write_len > bd_space:
+                data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
+                n_keys += update_index(file, buffer_index, n_buckets)
+                bd_pos = 0
+
+            ## Append to buffers
+            data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
+
+            buffer_index.extend(key_hash + data_pos_bytes)
+            buffer_data.extend(write_bytes)
+        else:
+            removed_count += 1
+            # print(bytes_to_int(ts_key_value_bytes[ts_bytes_len:ts_bytes_len+key_len]))
+
+        data_block_read_start_pos += init_data_block_len + key_value_len
+
+    ## Finish writing if there's data left in buffer
+    if buffer_data:
+        data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
+        n_keys += update_index(file, buffer_index, n_buckets)
+
+    os.ftruncate(file.fileno(), data_block_write_start_pos)
+    os.fsync(file.fileno())
+
+    if metadata_key_added:
+        n_keys -= 1
+
+    return n_keys, removed_count, n_buckets
 
 
 
