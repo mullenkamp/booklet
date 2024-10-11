@@ -174,6 +174,8 @@ The open flag follows the standard dbm options:
 
 Design
 -------
+VariableValue (default)
+~~~~~~~~~~~~~~~~~~~~~~~~
 There are two groups in a booklet file plus some initial bytes for parameters (sub index). The sub index is 200 bytes long, but currently only 37 bytes are used. The two other groups are the bucket index group and the data block group. The bucket index group contains the "hash table". This bucket index contains a fixed number of buckets (n_buckets) and each bucket contains a 6 byte integer of the position of the first data block associated with that bucket. When the user requests a value from a key input, the key is hashed and the modulus of the n_buckets is performed to determine which bucket to read. The 6 bytes is read from that bucket, converted to an integer, then booklet knows where the first data block is located in the file. The data block group contains all of the data blocks each of which contains the key hash, next data block pos, key length, value length, timestamp (if init with timestamps), key, and value (in this order).
 
 The number of bytes per data block object includes:
@@ -181,7 +183,7 @@ key hash: 13
 next data block pos: 6
 key length: 2
 value length: 4
-timestamp: either 0 (if no timestamps where init) or 7
+timestamp: either 0 (if init without timestamps) or 7
 key: variable
 value: variable
 
@@ -193,6 +195,12 @@ Deletes assign ndbp to 0 and reassign the prior data block it's original ndbp. T
 A delete also happens when a user "overwrites" the same key.
 
 A "prune" method has been created that allows the user to remove "deleted" items. It has two optional parameters. If timestamps have been initialized in booklet, then the user can pass a timestamp that will remove all items older than that timestamp. The reindexing option allows the user to increase the n_buckets when the number items greatly exceeds the initialized n_buckets. The implementation essentially just clears the original index then iterates through all data blocks and rewrites only the data blocks that haven't been deleted. In the case of the reindexing, it determines the difference between the old index size and the new index size, expands the file by that difference, moves all of the data blocks to the end of the file, and then writes the newer (and longer) index to the file. Then it continues with the normal pruning procedure. 
+
+FixedValue
+~~~~~~~~~~~
+The main difference from VariableValue is that the value length is globally fixed. The data block in a FixedValue object does not contain the value length as the value will always be the same global value length. The main advantage of this difference is that any overwrites of the same key can be written back to the same location on the file instead of always being appended to the end of the file. If a use-case includes many overwrites and the values are always the same size, then the FixedValue object is ideal.
+
+There are currently no timestamps in the FixedValue. This could be enabled in the future.
 
 Limitations
 -----------

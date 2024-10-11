@@ -230,7 +230,7 @@ class Booklet(MutableMapping):
 
     def set(self, key, value, timestamp=None, encode_value=True):
         """
-        Set a key/value pair. Optionally assign a specific timestamp. 
+        Set a key/value pair. Optionally assign a specific timestamp.
         The timestamp must be either None, an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone. None will create a timestamp of now.
         """
         if self.writable:
@@ -566,7 +566,7 @@ class FixedValue(Booklet):
 
 
 #####################################################
-### Default "open" should be the variable length class
+### Default "open" should be the variable value class
 
 
 def open(
