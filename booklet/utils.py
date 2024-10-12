@@ -936,7 +936,7 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp, uuid4):
+def init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp, uuid7):
     """
 
     """
@@ -985,9 +985,9 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets,
 
     file_ts_bytes = int_to_bytes(file_timestamp, timestamp_bytes_len)
 
-    uuid4_bytes = uuid4.bytes
+    uuid7_bytes = uuid7.bytes
 
-    init_write_bytes = uuid_variable_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes + uuid4_bytes
+    init_write_bytes = uuid_variable_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes + uuid7_bytes
 
     extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
 
@@ -1172,7 +1172,7 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp, uuid4):
+def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp, uuid7):
     """
 
     """
@@ -1207,9 +1207,9 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_time
     init_timestamps_bytes = b'\x00'
 
     file_ts_bytes = int_to_bytes(file_timestamp, timestamp_bytes_len)
-    uuid4_bytes = uuid4.bytes
+    uuid7_bytes = uuid7.bytes
 
-    init_write_bytes = uuid_fixed_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes + uuid4_bytes
+    init_write_bytes = uuid_fixed_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes + uuid7_bytes
 
     extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
     init_write_bytes += extra_bytes
