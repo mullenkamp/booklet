@@ -7,6 +7,8 @@ Created on Thu Jan  5 11:04:13 2023
 """
 import os
 import sys
+# import uuid
+import fastuuid as uuid
 # import math
 import io
 from hashlib import blake2b, blake2s
@@ -756,10 +758,6 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             portalocker.lock(self._file, portalocker.LOCK_UN)
             raise TypeError('This is not the correct file type.')
 
-        version = bytes_to_int(base_param_bytes[16:18])
-        if version < 3:
-            raise ValueError('File is an older version.')
-
         # TODO : Create a process that will recreate the index if the data end pos is < 200. This can be done by rolling over the data blocks and iteratively writing the indexes.
         # At the moment, I'll just have it fail.
         # if self._data_end_pos < sub_index_init_pos:
@@ -803,9 +801,12 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             init_bytes[n_keys_pos:n_keys_pos+4] = int_to_bytes(0, 4)
         else:
             file_timestamp = make_timestamp_int()
-    
-            init_bytes = init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp)
 
+            uuid7 = uuid.uuid7()
+
+            init_bytes = init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp, uuid7)
+
+            self.uuid = uuid7
             self._n_buckets = n_buckets
             self._init_timestamps = init_timestamps
             if self._init_timestamps:
@@ -883,6 +884,7 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
     """
 
     """
+    # Read init bytes
     self._version = bytes_to_int(base_param_bytes[16:18])
     self._n_bytes_file = bytes_to_int(base_param_bytes[18:19])
     self._n_bytes_key = bytes_to_int(base_param_bytes[19:20])
@@ -901,6 +903,9 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
 
     self._file_timestamp = bytes_to_int(base_param_bytes[file_timestamp_pos:file_timestamp_pos + timestamp_bytes_len])
 
+    self.uuid = uuid.UUID(bytes=bytes(base_param_bytes[49:65]))
+
+    ## Assign attributes
     self._n_keys_pos = n_keys_pos
 
     ## Pull out the serializers
@@ -931,7 +936,7 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp):
+def init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp, uuid7):
     """
 
     """
@@ -980,7 +985,9 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets,
 
     file_ts_bytes = int_to_bytes(file_timestamp, timestamp_bytes_len)
 
-    init_write_bytes = uuid_variable_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes
+    uuid7_bytes = uuid7.bytes
+
+    init_write_bytes = uuid_variable_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes + uuid7_bytes
 
     extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
 
@@ -1087,9 +1094,11 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
                 raise ValueError('value_len must be an int > 0.')
 
             file_timestamp = make_timestamp_int()
-    
-            init_bytes = init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp)
+            uuid7 = uuid.uuid7()
 
+            init_bytes = init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp, uuid7)
+
+            self.uuid = uuid7
             self._n_buckets = n_buckets
             self._value_len = value_len
             self._init_timestamps = 0
@@ -1127,6 +1136,7 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
     """
 
     """
+    ## Assign attributes from init bytes
     self._n_bytes_file = bytes_to_int(base_param_bytes[18:19])
     self._n_bytes_key = bytes_to_int(base_param_bytes[19:20])
     # self._n_bytes_value = bytes_to_int(base_param_bytes[20:21])
@@ -1140,6 +1150,9 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
     self._ts_bytes_len = 0
     self._file_timestamp = bytes_to_int(base_param_bytes[file_timestamp_pos:file_timestamp_pos + timestamp_bytes_len])
 
+    self.uuid = uuid.UUID(bytes=bytes(base_param_bytes[49:65]))
+
+    ## Other attrs
     self._n_keys_pos = n_keys_pos
 
     ## Pull out the serializers
@@ -1159,7 +1172,7 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
         raise ValueError('How did you mess up key_serializer so bad?!', self)
 
 
-def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp):
+def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp, uuid7):
     """
 
     """
@@ -1194,8 +1207,9 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_time
     init_timestamps_bytes = b'\x00'
 
     file_ts_bytes = int_to_bytes(file_timestamp, timestamp_bytes_len)
+    uuid7_bytes = uuid7.bytes
 
-    init_write_bytes = uuid_fixed_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes
+    init_write_bytes = uuid_fixed_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes + uuid7_bytes
 
     extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
     init_write_bytes += extra_bytes
