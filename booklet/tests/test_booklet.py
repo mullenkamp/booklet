@@ -133,7 +133,7 @@ def test_set_get_metadata(file_path):
 def test_set_get_timestamp(file_path):
     with VariableValue(file_path, 'w') as f:
         ts_old, value = f.get_timestamp(10, True)
-        ts_new = int((time.time() + utils.tz_offset) * 1000000)
+        ts_new = utils.make_timestamp_int()
         f.set_timestamp(10, ts_new)
 
     with VariableValue(file_path) as f:
@@ -167,7 +167,7 @@ def test_timestamps(file_path):
             source_value = data_dict[key]
             assert source_value == value
 
-        ts_new = int((time.time() + utils.tz_offset) * 1000000)
+        ts_new = utils.make_timestamp_int()
         for key, ts in f.timestamps():
             assert ts_new > ts
 
