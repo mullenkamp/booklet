@@ -8,7 +8,8 @@ Created on Thu Jan  5 11:04:13 2023
 import os
 import sys
 # import uuid
-import fastuuid as uuid
+# import fastuuid as uuid
+import uuid6 as uuid
 # import math
 import io
 from hashlib import blake2b, blake2s
@@ -24,6 +25,8 @@ from collections import Counter, defaultdict, deque
 import weakref
 import pathlib
 import orjson
+from typing import Union, Optional
+import struct
 # from time import time
 
 # import serializers
@@ -66,10 +69,10 @@ n_buckets_reindex = {
     }
 
 ## TZ offset
-if time.daylight:
-    tz_offset = time.altzone
-else:
-    tz_offset = time.timezone
+# if time.daylight:
+#     tz_offset = time.altzone
+# else:
+#     tz_offset = time.timezone
 
 ############################################
 ### Exception classes
@@ -100,24 +103,6 @@ else:
 ### Functions
 
 
-# def make_timestamp(tz_offset, timestamp=None):
-#     """
-#     The timestamp should be either None or an int of the number of microseconds in unix time. It will return an int of the number of microseconds in unix time.
-#     There are many ways to convert a timestamp in various forms to the number of microseconds. I should include some examples...
-
-#     For reference:
-#     Milliseconds should have at least 6 bytes for storage, while microseconds should have at least 7 bytes.
-#     """
-#     if timestamp is None:
-#         int_us = int((time.time() + tz_offset) * 1000000)
-#     elif isinstance(timestamp, int):
-#         int_us = timestamp
-#     else:
-#         raise TypeError('timestamp must be either None or a datetime object.')
-
-#     return int_us
-
-
 def make_timestamp_int(timestamp=None):
     """
     The timestamp must be either None, an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone. None will create a timestamp of now.
@@ -125,7 +110,7 @@ def make_timestamp_int(timestamp=None):
     It will return an int of the number of microseconds in POSIX UTC time.
     """
     if timestamp is None:
-        int_us = int((time.time() + tz_offset) * 1000000)
+        int_us = time.time_ns() // 1000
     elif isinstance(timestamp, int):
         int_us = timestamp
     elif isinstance(timestamp, str):
@@ -802,11 +787,11 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         else:
             file_timestamp = make_timestamp_int()
 
-            uuid7 = uuid.uuid7()
+            uuid8 = uuid.uuid8()
 
-            init_bytes = init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp, uuid7)
+            init_bytes = init_base_params_variable(self, key_serializer, value_serializer, n_buckets, init_timestamps, file_timestamp, uuid8)
 
-            self.uuid = uuid7
+            self.uuid = uuid8
             self._n_buckets = n_buckets
             self._init_timestamps = init_timestamps
             if self._init_timestamps:
@@ -1025,9 +1010,6 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     self._file_path = fp
     # self._platform = sys.platform
 
-    ## TZ offset
-    self._tz_offset = tz_offset
-
     if fp_exists:
         if write:
             self._file = io.open(fp, 'r+b', buffering=0)
@@ -1094,11 +1076,11 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
                 raise ValueError('value_len must be an int > 0.')
 
             file_timestamp = make_timestamp_int()
-            uuid7 = uuid.uuid7()
+            uuid8 = uuid.uuid8()
 
-            init_bytes = init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp, uuid7)
+            init_bytes = init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_timestamp, uuid8)
 
-            self.uuid = uuid7
+            self.uuid = uuid8
             self._n_buckets = n_buckets
             self._value_len = value_len
             self._init_timestamps = 0
