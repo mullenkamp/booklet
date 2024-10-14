@@ -151,14 +151,16 @@ class Booklet(MutableMapping):
         for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len):
             yield self._post_value(value)
 
-    def timestamps(self, include_value=False):
+    def timestamps(self, include_value=False, decode_value=True):
         """
         Return an iterator for timestamps for all keys. Optionally add values to the iterator.
         """
         if self._init_timestamps:
             if include_value:
                 for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len):
-                    yield self._post_key(key), ts_int, self._post_value(value)
+                    if decode_value:
+                        value = self._post_value(value)
+                    yield self._post_key(key), ts_int, value
             else:
                 for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len):
                     yield self._post_key(key), ts_int
@@ -194,7 +196,7 @@ class Booklet(MutableMapping):
         else:
             return default
 
-    def get_timestamp(self, key, include_value=False, default=None):
+    def get_timestamp(self, key, include_value=False, decode_value=True, default=None):
         """
         Get a timestamp associated with a key. Optionally include the value.
         """
@@ -203,8 +205,12 @@ class Booklet(MutableMapping):
 
             if output:
                 value, ts_int = output
-                if value:
-                    return ts_int, self._post_value(value)
+
+                if include_value:
+                    if decode_value:
+                        value = self._post_value(value)
+
+                    return ts_int, value
                 else:
                     return ts_int
             else:
@@ -241,6 +247,25 @@ class Booklet(MutableMapping):
                 self._n_keys += n_extra_keys
         else:
             raise ValueError('File is open for read only.')
+
+
+    # def get_data(self, key, decode_value=True, default=None):
+    #     """
+
+    #     """
+    #     output = utils.get_value_ts(self._file, self._pre_key(key), self._n_buckets, True, True, self._ts_bytes_len)
+
+    #     if output:
+    #         value, ts_int = output
+    #         if decode_value:
+    #             value = self._post_value(value)
+
+    #         if self._init_timestamps:
+    #             return value, ts_int
+    #         else:
+    #             return value
+    #     else:
+    #         return default
 
 
     def update(self, key_value_dict):
