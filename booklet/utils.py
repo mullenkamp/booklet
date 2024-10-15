@@ -206,50 +206,51 @@ def get_bucket_index_pos(index_bucket):
     return sub_index_init_pos + (index_bucket * n_bytes_file)
 
 
-def get_first_data_block_pos(file_mmap, bucket_index_pos):
+def get_first_data_block_pos(file, bucket_index_pos):
     """
 
     """
-    file_mmap.seek(bucket_index_pos)
-    data_block_pos = bytes_to_int(file_mmap.read(n_bytes_file))
+    file.seek(bucket_index_pos)
+    data_block_pos = bytes_to_int(file.read(n_bytes_file))
 
     return data_block_pos
 
 
-def get_last_data_block_pos(file_mmap, key_hash, first_data_block_pos):
+def get_last_data_block_pos(file, key_hash, n_buckets):
     """
-
+    Puts a bunch of the previous functions together.
     """
     index_len = key_hash_len + n_bytes_file
-    data_block_pos = first_data_block_pos
-    while True:
-        file_mmap.seek(data_block_pos)
-        data_index = file_mmap.read(index_len)
-        next_data_block_pos = bytes_to_int(data_index[key_hash_len:])
-        if next_data_block_pos:
-            if data_index[:key_hash_len] == key_hash:
-                return data_block_pos
-            elif next_data_block_pos == 1:
+
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket)
+    data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
+
+    if data_block_pos:
+        while True:
+            file.seek(data_block_pos)
+            data_index = file.read(index_len)
+            next_data_block_pos = bytes_to_int(data_index[key_hash_len:])
+            if next_data_block_pos:
+                if data_index[:key_hash_len] == key_hash:
+                    return data_block_pos
+                elif next_data_block_pos == 1:
+                    return 0
+            else:
                 return 0
-        else:
-            return 0
+    
+            data_block_pos = next_data_block_pos
+    else:
+        return 0
 
-        data_block_pos = next_data_block_pos
 
-
-def contains_key(file_mmap, key_hash, n_buckets):
+def contains_key(file, key_hash, n_buckets):
     """
     Determine if a key is present in the file.
     """
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file_mmap, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file_mmap, key_hash, first_data_block_pos)
-        if data_block_pos:
-            return True
-        else:
-            return False
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        return True
     else:
         return False
 
@@ -259,21 +260,15 @@ def set_timestamp(file, key, n_buckets, timestamp):
 
     """
     key_hash = hash_key(key)
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
-        if data_block_pos:
-            ts_pos = data_block_pos + key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value
-            file.seek(ts_pos)
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        ts_pos = data_block_pos + key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value
+        file.seek(ts_pos)
 
-            ts_bytes = int_to_bytes(timestamp, timestamp_bytes_len)
-            file.write(ts_bytes)
+        ts_bytes = int_to_bytes(timestamp, timestamp_bytes_len)
+        file.write(ts_bytes)
 
-            return True
-        else:
-            return False
+        return True
     else:
         return False
 
@@ -282,23 +277,19 @@ def get_value(file, key, n_buckets, ts_bytes_len=0):
     """
     Combines everything necessary to return a value.
     """
-    value = False
-
     key_hash = hash_key(key)
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
-        if data_block_pos:
-            key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-            file.seek(key_len_pos)
-            key_len_value_len = file.read(n_bytes_key + n_bytes_value)
-            key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
-            value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
+        file.seek(key_len_pos)
+        key_len_value_len = file.read(n_bytes_key + n_bytes_value)
+        key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
+        value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
 
-            file.seek(ts_bytes_len + key_len, 1)
-            value = file.read(value_len)
+        file.seek(ts_bytes_len + key_len, 1)
+        value = file.read(value_len)
+    else:
+        value = False
 
     return value
 
@@ -307,33 +298,29 @@ def get_value_ts(file, key, n_buckets, include_value=True, include_ts=False, ts_
     """
     Combines everything necessary to return a value.
     """
-    output = False
-
     key_hash = hash_key(key)
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
-        if data_block_pos:
-            key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-            file.seek(key_len_pos)
-            key_len_value_len = file.read(n_bytes_key + n_bytes_value)
-            key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
-            value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
+        file.seek(key_len_pos)
+        key_len_value_len = file.read(n_bytes_key + n_bytes_value)
+        key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
+        value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
 
-            if include_value and include_ts:
-                ts_key_value = file.read(ts_bytes_len + key_len + value_len)
-                ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
-                value = ts_key_value[ts_bytes_len + key_len:]
-                output = value, ts_int
-            elif include_value:
-                file.seek(ts_bytes_len + key_len, 1)
-                output = (file.read(value_len), None)
-            elif include_ts:
-                output = (None, bytes_to_int(file.read(ts_bytes_len)))
-            else:
-                raise ValueError('include_value and/or include_timestamp must be True.')
+        if include_value and include_ts:
+            ts_key_value = file.read(ts_bytes_len + key_len + value_len)
+            ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
+            value = ts_key_value[ts_bytes_len + key_len:]
+            output = value, ts_int
+        elif include_value:
+            file.seek(ts_bytes_len + key_len, 1)
+            output = (file.read(value_len), None)
+        elif include_ts:
+            output = (None, bytes_to_int(file.read(ts_bytes_len)))
+        else:
+            raise ValueError('include_value and/or include_timestamp must be True.')
+    else:
+        output = False
 
     return output
 
@@ -1203,21 +1190,17 @@ def get_value_fixed(file, key, n_buckets, value_len):
     """
     Combines everything necessary to return a value.
     """
-    value = False
-
     key_hash = hash_key(key)
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
-        if data_block_pos:
-            key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-            file.seek(key_len_pos)
-            key_len = bytes_to_int(file.read(n_bytes_key))
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
+        file.seek(key_len_pos)
+        key_len = bytes_to_int(file.read(n_bytes_key))
 
-            file.seek(key_len, 1)
-            value = file.read(value_len)
+        file.seek(key_len, 1)
+        value = file.read(value_len)
+    else:
+        value = False
 
     return value
 

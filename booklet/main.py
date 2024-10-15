@@ -184,9 +184,9 @@ class Booklet(MutableMapping):
 
     def __contains__(self, key):
         bytes_key = self._pre_key(key)
-        hash_key = utils.hash_key(bytes_key)
+        key_hash = utils.hash_key(bytes_key)
 
-        return utils.contains_key(self._file, hash_key, self._n_buckets)
+        return utils.contains_key(self._file, key_hash, self._n_buckets)
 
     def get(self, key, default=None):
         value = utils.get_value(self._file, self._pre_key(key), self._n_buckets, self._ts_bytes_len)
