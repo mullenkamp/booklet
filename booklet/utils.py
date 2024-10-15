@@ -255,11 +255,10 @@ def contains_key(file, key_hash, n_buckets):
         return False
 
 
-def set_timestamp(file, key, n_buckets, timestamp):
+def set_timestamp(file, key_hash, n_buckets, timestamp):
     """
 
     """
-    key_hash = hash_key(key)
     data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
     if data_block_pos:
         ts_pos = data_block_pos + key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value
@@ -273,11 +272,10 @@ def set_timestamp(file, key, n_buckets, timestamp):
         return False
 
 
-def get_value(file, key, n_buckets, ts_bytes_len=0):
+def get_value(file, key_hash, n_buckets, ts_bytes_len=0):
     """
     Combines everything necessary to return a value.
     """
-    key_hash = hash_key(key)
     data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
     if data_block_pos:
         key_len_pos = data_block_pos + key_hash_len + n_bytes_file
@@ -294,11 +292,10 @@ def get_value(file, key, n_buckets, ts_bytes_len=0):
     return value
 
 
-def get_value_ts(file, key, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0):
+def get_value_ts(file, key_hash, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0):
     """
     Combines everything necessary to return a value.
     """
-    key_hash = hash_key(key)
     data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
     if data_block_pos:
         key_len_pos = data_block_pos + key_hash_len + n_bytes_file
@@ -376,13 +373,12 @@ def iter_keys_values(file, n_buckets, include_key, include_value, include_ts=Fal
     return iter_keys_value_from_start_end_pos(file, start, end, include_key, include_value, include_ts, ts_bytes_len)
 
 
-def assign_delete_flag(file, key, n_buckets):
+def assign_delete_flag(file, key_hash, n_buckets):
     """
     Assigns 0 at the key hash index and the key/value data block.
     """
     index_len = key_hash_len + n_bytes_file
 
-    key_hash = hash_key(key)
     index_bucket = get_index_bucket(key_hash, n_buckets)
     bucket_index_pos = get_bucket_index_pos(index_bucket)
     first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
@@ -448,7 +444,7 @@ def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, wr
     ## Append to buffers
     data_pos_bytes = int_to_bytes(file_len + bd_pos, n_bytes_file)
 
-    buffer_index.extend(key_hash + data_pos_bytes)
+    buffer_index[key_hash] = data_pos_bytes
     buffer_data.extend(write_bytes)
 
     return n_keys
@@ -480,18 +476,18 @@ def update_index(file, buffer_index, n_buckets):
     """
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
 
-    buffer_len = len(buffer_index)
+    # buffer_len = len(buffer_index)
 
     ## Check for old keys and assign data_block_pos to previous key in chain
-    n = int(buffer_len/one_extra_index_bytes_len)
+    # n = int(buffer_len/one_extra_index_bytes_len)
 
     n_keys = 0
-    for i in range(n):
-        start = i * one_extra_index_bytes_len
-        end = start + one_extra_index_bytes_len
-        index_data = buffer_index[start:end]
-        key_hash = index_data[:key_hash_len]
-        new_data_block_pos_bytes = index_data[key_hash_len:]
+    for key_hash, new_data_block_pos_bytes in buffer_index.items():
+        # start = i * one_extra_index_bytes_len
+        # end = start + one_extra_index_bytes_len
+        # index_data = buffer_index[start:end]
+        # key_hash = index_data[:key_hash_len]
+        # new_data_block_pos_bytes = index_data[key_hash_len:]
 
         index_bucket = get_index_bucket(key_hash, n_buckets)
         bucket_index_pos = get_bucket_index_pos(index_bucket)
@@ -644,7 +640,7 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
             ## Append to buffers
             data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
 
-            buffer_index.extend(key_hash + data_pos_bytes)
+            buffer_index[key_hash] = data_pos_bytes
             buffer_data.extend(write_bytes)
         else:
             removed_count += 1
@@ -693,6 +689,9 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
     # self._platform = sys.platform
 
+    self._buffer_data = bytearray()
+    self._buffer_index = {}
+
     if fp_exists:
         if write:
             self._file = io.open(fp, 'r+b', buffering=0)
@@ -700,8 +699,8 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             # self._file_mmap = mmap.mmap(self._fd, 0)
             # self._file_mmap = None
 
-            self._buffer_data = bytearray()
-            self._buffer_index = bytearray()
+            # self._buffer_data = bytearray()
+            # self._buffer_index = {}
 
             ## Locks
             portalocker.lock(self._file, portalocker.LOCK_EX)
@@ -713,8 +712,8 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             # self._fd = self._file.fileno()
             # self._file_mmap = mmap.mmap(self._fd, 0, access=mmap.ACCESS_READ)
             # self._file_mmap = None
-            self._buffer_data = None
-            self._buffer_index = None
+            # self._buffer_data = None
+            # self._buffer_index = None
 
             ## Lock
             portalocker.lock(self._file, portalocker.LOCK_SH)
@@ -796,8 +795,8 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         self._file = io.open(fp, 'w+b', buffering=0)
         # self._fd = self._file.fileno()
 
-        self._buffer_data = bytearray()
-        self._buffer_index = bytearray()
+        # self._buffer_data = bytearray()
+        # self._buffer_index = {}
 
         ## Locks
         portalocker.lock(self._file, portalocker.LOCK_EX)
@@ -997,20 +996,23 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     self._file_path = fp
     # self._platform = sys.platform
 
+    self._buffer_data = bytearray()
+    self._buffer_index = {}
+
     if fp_exists:
         if write:
             self._file = io.open(fp, 'r+b', buffering=0)
 
-            self._buffer_data = bytearray()
-            self._buffer_index = bytearray()
+            # self._buffer_data = bytearray()
+            # self._buffer_index = {}
 
             ## Locks
             portalocker.lock(self._file, portalocker.LOCK_EX)
             self._thread_lock = Lock()
         else:
             self._file = io.open(fp, 'rb', buffering=0)
-            self._buffer_data = None
-            self._buffer_index = None
+            # self._buffer_data = None
+            # self._buffer_index = None
 
             ## Lock
             portalocker.lock(self._file, portalocker.LOCK_SH)
@@ -1082,8 +1084,8 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         self._file = io.open(fp, 'w+b', buffering=0)
         # self._fd = self._file.fileno()
 
-        self._buffer_data = bytearray()
-        self._buffer_index = bytearray()
+        # self._buffer_data = bytearray()
+        # self._buffer_index = {}
 
         ## Locks
         portalocker.lock(self._file, portalocker.LOCK_EX)
@@ -1186,11 +1188,10 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_time
     return init_write_bytes
 
 
-def get_value_fixed(file, key, n_buckets, value_len):
+def get_value_fixed(file, key_hash, n_buckets, value_len):
     """
     Combines everything necessary to return a value.
     """
-    key_hash = hash_key(key)
     data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
     if data_block_pos:
         key_len_pos = data_block_pos + key_hash_len + n_bytes_file
@@ -1269,7 +1270,7 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
     ## Append to buffers
     data_pos_bytes = int_to_bytes(file_len + bd_pos, n_bytes_file)
 
-    buffer_index.extend(key_hash + data_pos_bytes)
+    buffer_index[key_hash] = data_pos_bytes
     buffer_data.extend(write_bytes)
 
     return n_keys
@@ -1397,7 +1398,7 @@ def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_
             ## Append to buffers
             data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
 
-            buffer_index.extend(key_hash + data_pos_bytes)
+            buffer_index[key_hash] = data_pos_bytes
             buffer_data.extend(write_bytes)
         else:
             removed_count += 1

@@ -186,10 +186,19 @@ class Booklet(MutableMapping):
         bytes_key = self._pre_key(key)
         key_hash = utils.hash_key(bytes_key)
 
+        if key_hash in self._buffer_index:
+            return True
+
         return utils.contains_key(self._file, key_hash, self._n_buckets)
 
     def get(self, key, default=None):
-        value = utils.get_value(self._file, self._pre_key(key), self._n_buckets, self._ts_bytes_len)
+        key_bytes = self._pre_key(key)
+        key_hash = utils.hash_key(key_bytes)
+
+        if key_hash in self._buffer_index:
+            self.sync()
+
+        value = utils.get_value(self._file, key_hash, self._n_buckets, self._ts_bytes_len)
 
         if value:
             return self._post_value(value)
@@ -201,7 +210,13 @@ class Booklet(MutableMapping):
         Get a timestamp associated with a key. Optionally include the value.
         """
         if self._init_timestamps:
-            output = utils.get_value_ts(self._file, self._pre_key(key), self._n_buckets, include_value, True, self._ts_bytes_len)
+            key_bytes = self._pre_key(key)
+            key_hash = utils.hash_key(key_bytes)
+
+            if key_hash in self._buffer_index:
+                self.sync()
+
+            output = utils.get_value_ts(self._file, key_hash, self._n_buckets, include_value, True, self._ts_bytes_len)
 
             if output:
                 value, ts_int = output
@@ -224,7 +239,10 @@ class Booklet(MutableMapping):
         """
         if self._init_timestamps:
             if self.writable:
-                success = utils.set_timestamp(self._file, self._pre_key(key), self._n_buckets, timestamp)
+                key_bytes = self._pre_key(key)
+                key_hash = utils.hash_key(key_bytes)
+
+                success = utils.set_timestamp(self._file, key_hash, self._n_buckets, timestamp)
 
                 if not success:
                     raise KeyError(key)
@@ -527,7 +545,13 @@ class FixedValue(Booklet):
             yield self._post_value(value)
 
     def get(self, key, default=None):
-        value = utils.get_value_fixed(self._file, self._pre_key(key), self._n_buckets, self._value_len)
+        key_bytes = self._pre_key(key)
+        key_hash = utils.hash_key(key_bytes)
+
+        if key_hash in self._buffer_index:
+            self.sync()
+
+        value = utils.get_value_fixed(self._file, key_hash, self._n_buckets, self._value_len)
 
         if not value:
             return default
@@ -572,7 +596,7 @@ class FixedValue(Booklet):
 
 
     def __getitem__(self, key):
-        value = utils.get_value_fixed(self._file, self._pre_key(key), self._n_buckets, self._value_len)
+        value = self.get(key)
 
         if not value:
             raise KeyError(key)
