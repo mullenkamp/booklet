@@ -29,8 +29,8 @@ from typing import Union, Optional
 import struct
 # from time import time
 
-# import serializers
-from . import serializers
+import serializers
+# from . import serializers
 
 ############################################
 ### Parameters
@@ -411,7 +411,7 @@ def assign_delete_flag(file, key_hash, n_buckets):
         return False
 
 
-def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, write_buffer_size, timestamp=None, ts_bytes_len=0):
+def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, buffer_index_set, write_buffer_size, timestamp=None, ts_bytes_len=0):
     """
 
     """
@@ -444,7 +444,8 @@ def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, wr
     ## Append to buffers
     data_pos_bytes = int_to_bytes(file_len + bd_pos, n_bytes_file)
 
-    buffer_index[key_hash] = data_pos_bytes
+    buffer_index.extend(key_hash + data_pos_bytes)
+    buffer_index_set.add(key_hash)
     buffer_data.extend(write_bytes)
 
     return n_keys
@@ -470,24 +471,25 @@ def flush_data_buffer(file, buffer_data, write_pos):
         return write_pos
 
 
-def update_index(file, buffer_index, n_buckets):
+def update_index(file, buffer_index, buffer_index_set, n_buckets):
     """
 
     """
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
 
-    # buffer_len = len(buffer_index)
+    buffer_len = len(buffer_index)
 
     ## Check for old keys and assign data_block_pos to previous key in chain
-    # n = int(buffer_len/one_extra_index_bytes_len)
+    n = int(buffer_len/one_extra_index_bytes_len)
 
     n_keys = 0
-    for key_hash, new_data_block_pos_bytes in buffer_index.items():
-        # start = i * one_extra_index_bytes_len
-        # end = start + one_extra_index_bytes_len
-        # index_data = buffer_index[start:end]
-        # key_hash = index_data[:key_hash_len]
-        # new_data_block_pos_bytes = index_data[key_hash_len:]
+    # for key_hash, new_data_block_pos_bytes in buffer_index.items():
+    for i in range(n):
+        start = i * one_extra_index_bytes_len
+        end = start + one_extra_index_bytes_len
+        index_data = buffer_index[start:end]
+        key_hash = index_data[:key_hash_len]
+        new_data_block_pos_bytes = index_data[key_hash_len:]
 
         index_bucket = get_index_bucket(key_hash, n_buckets)
         bucket_index_pos = get_bucket_index_pos(index_bucket)
@@ -530,6 +532,7 @@ def update_index(file, buffer_index, n_buckets):
             n_keys += 1
 
     buffer_index.clear()
+    buffer_index_set.clear()
 
     return n_keys
 
@@ -640,7 +643,8 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
             ## Append to buffers
             data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
 
-            buffer_index[key_hash] = data_pos_bytes
+            # buffer_index[key_hash] = data_pos_bytes
+            buffer_index.extend(key_hash + data_pos_bytes)
             buffer_data.extend(write_bytes)
         else:
             removed_count += 1
@@ -690,7 +694,8 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
     # self._platform = sys.platform
 
     self._buffer_data = bytearray()
-    self._buffer_index = {}
+    self._buffer_index = bytearray()
+    self._buffer_index_set = set()
 
     if fp_exists:
         if write:
@@ -998,6 +1003,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
 
     self._buffer_data = bytearray()
     self._buffer_index = {}
+    self._buffer_index_set = set()
 
     if fp_exists:
         if write:
@@ -1242,7 +1248,7 @@ def iter_keys_values_fixed(file, n_buckets, include_key, include_value, value_le
             file.seek(key_len + value_len, 1)
 
 
-def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_index, write_buffer_size):
+def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_index, buffer_index_set, write_buffer_size):
     """
 
     """
@@ -1270,7 +1276,8 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
     ## Append to buffers
     data_pos_bytes = int_to_bytes(file_len + bd_pos, n_bytes_file)
 
-    buffer_index[key_hash] = data_pos_bytes
+    buffer_index.extend(key_hash + data_pos_bytes)
+    buffer_index_set.add(key_hash)
     buffer_data.extend(write_bytes)
 
     return n_keys
