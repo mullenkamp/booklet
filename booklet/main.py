@@ -340,7 +340,10 @@ class Booklet(MutableMapping):
         if self.writable:
             self.sync()
             with self._thread_lock:
-                del_bool = utils.assign_delete_flag(self._file, self._pre_key(key), self._n_buckets)
+                key_bytes = self._pre_key(key)
+                key_hash = utils.hash_key(key_bytes)
+
+                del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets)
                 if del_bool:
                     self._n_keys -= 1
                     # self._file.seek(self._n_deletes_pos)
