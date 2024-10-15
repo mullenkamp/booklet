@@ -310,6 +310,8 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 n_keys, removed_count, n_buckets = utils.prune_file(self._file, timestamp, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index)
                 self._n_keys = n_keys
+                self._file.seek(self._n_keys_pos)
+                self._file.write(utils.int_to_bytes(self._n_keys, 4))
 
                 if n_buckets != self._n_buckets:
                     self._n_buckets = n_buckets
@@ -348,8 +350,8 @@ class Booklet(MutableMapping):
                 del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets)
                 if del_bool:
                     self._n_keys -= 1
-                    # self._file.seek(self._n_deletes_pos)
-                    # self._file.write(utils.int_to_bytes(self._n_deletes, 4))
+                    self._file.seek(self._n_keys_pos)
+                    self._file.write(utils.int_to_bytes(self._n_keys, 4))
                 else:
                     raise KeyError(key)
         else:
@@ -366,6 +368,8 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 utils.clear(self._file, self._n_buckets, self._n_keys_pos, self._write_buffer_size)
                 self._n_keys = 0
+                self._file.seek(self._n_keys_pos)
+                self._file.write(utils.int_to_bytes(self._n_keys, 4))
 
         else:
             raise ValueError('File is open for read only.')
@@ -389,9 +393,9 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 if self._buffer_index:
                     utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
-                self._sync_index()
-                self._file.seek(self._n_keys_pos)
-                self._file.write(utils.int_to_bytes(self._n_keys, 4))
+                    self._sync_index()
+                    self._file.seek(self._n_keys_pos)
+                    self._file.write(utils.int_to_bytes(self._n_keys, 4))
                 self._file.flush()
 
     def _sync_index(self):
