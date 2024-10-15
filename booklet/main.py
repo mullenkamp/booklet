@@ -94,7 +94,9 @@ class Booklet(MutableMapping):
         Get the metadata. Optionally include the timestamp in the output.
         Will return None if no metadata has been assigned.
         """
-        output = utils.get_value_ts(self._file, utils.metadata_key_bytes, self._n_buckets, True, include_timestamp, self._ts_bytes_len)
+        key_hash = utils.hash_key(utils.metadata_key_bytes)
+
+        output = utils.get_value_ts(self._file, key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len)
 
         if output:
             value, ts_int = output
