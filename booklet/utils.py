@@ -1002,7 +1002,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     # self._platform = sys.platform
 
     self._buffer_data = bytearray()
-    self._buffer_index = {}
+    self._buffer_index = bytearray()
     self._buffer_index_set = set()
 
     if fp_exists:
