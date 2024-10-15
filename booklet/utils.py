@@ -206,134 +206,118 @@ def get_bucket_index_pos(index_bucket):
     return sub_index_init_pos + (index_bucket * n_bytes_file)
 
 
-def get_first_data_block_pos(file_mmap, bucket_index_pos):
+def get_first_data_block_pos(file, bucket_index_pos):
     """
 
     """
-    file_mmap.seek(bucket_index_pos)
-    data_block_pos = bytes_to_int(file_mmap.read(n_bytes_file))
+    file.seek(bucket_index_pos)
+    data_block_pos = bytes_to_int(file.read(n_bytes_file))
 
     return data_block_pos
 
 
-def get_last_data_block_pos(file_mmap, key_hash, first_data_block_pos):
+def get_last_data_block_pos(file, key_hash, n_buckets):
     """
-
+    Puts a bunch of the previous functions together.
     """
     index_len = key_hash_len + n_bytes_file
-    data_block_pos = first_data_block_pos
-    while True:
-        file_mmap.seek(data_block_pos)
-        data_index = file_mmap.read(index_len)
-        next_data_block_pos = bytes_to_int(data_index[key_hash_len:])
-        if next_data_block_pos:
-            if data_index[:key_hash_len] == key_hash:
-                return data_block_pos
-            elif next_data_block_pos == 1:
+
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket)
+    data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
+
+    if data_block_pos:
+        while True:
+            file.seek(data_block_pos)
+            data_index = file.read(index_len)
+            next_data_block_pos = bytes_to_int(data_index[key_hash_len:])
+            if next_data_block_pos:
+                if data_index[:key_hash_len] == key_hash:
+                    return data_block_pos
+                elif next_data_block_pos == 1:
+                    return 0
+            else:
                 return 0
-        else:
-            return 0
+    
+            data_block_pos = next_data_block_pos
+    else:
+        return 0
 
-        data_block_pos = next_data_block_pos
 
-
-def contains_key(file_mmap, key_hash, n_buckets):
+def contains_key(file, key_hash, n_buckets):
     """
     Determine if a key is present in the file.
     """
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file_mmap, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file_mmap, key_hash, first_data_block_pos)
-        if data_block_pos:
-            return True
-        else:
-            return False
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        return True
     else:
         return False
 
 
-def set_timestamp(file, key, n_buckets, timestamp):
+def set_timestamp(file, key_hash, n_buckets, timestamp):
     """
 
     """
-    key_hash = hash_key(key)
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
-        if data_block_pos:
-            ts_pos = data_block_pos + key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value
-            file.seek(ts_pos)
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        ts_pos = data_block_pos + key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value
+        file.seek(ts_pos)
 
-            ts_bytes = int_to_bytes(timestamp, timestamp_bytes_len)
-            file.write(ts_bytes)
+        ts_bytes = int_to_bytes(timestamp, timestamp_bytes_len)
+        file.write(ts_bytes)
 
-            return True
-        else:
-            return False
+        return True
     else:
         return False
 
 
-def get_value(file, key, n_buckets, ts_bytes_len=0):
+def get_value(file, key_hash, n_buckets, ts_bytes_len=0):
     """
     Combines everything necessary to return a value.
     """
-    value = False
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
+        file.seek(key_len_pos)
+        key_len_value_len = file.read(n_bytes_key + n_bytes_value)
+        key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
+        value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
 
-    key_hash = hash_key(key)
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
-        if data_block_pos:
-            key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-            file.seek(key_len_pos)
-            key_len_value_len = file.read(n_bytes_key + n_bytes_value)
-            key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
-            value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
-
-            file.seek(ts_bytes_len + key_len, 1)
-            value = file.read(value_len)
+        file.seek(ts_bytes_len + key_len, 1)
+        value = file.read(value_len)
+    else:
+        value = False
 
     return value
 
 
-def get_value_ts(file, key, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0):
+def get_value_ts(file, key_hash, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0):
     """
     Combines everything necessary to return a value.
     """
-    output = False
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
+        file.seek(key_len_pos)
+        key_len_value_len = file.read(n_bytes_key + n_bytes_value)
+        key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
+        value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
 
-    key_hash = hash_key(key)
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
-        if data_block_pos:
-            key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-            file.seek(key_len_pos)
-            key_len_value_len = file.read(n_bytes_key + n_bytes_value)
-            key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
-            value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
-
-            if include_value and include_ts:
-                ts_key_value = file.read(ts_bytes_len + key_len + value_len)
-                ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
-                value = ts_key_value[ts_bytes_len + key_len:]
-                output = value, ts_int
-            elif include_value:
-                file.seek(ts_bytes_len + key_len, 1)
-                output = (file.read(value_len), None)
-            elif include_ts:
-                output = (None, bytes_to_int(file.read(ts_bytes_len)))
-            else:
-                raise ValueError('include_value and/or include_timestamp must be True.')
+        if include_value and include_ts:
+            ts_key_value = file.read(ts_bytes_len + key_len + value_len)
+            ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
+            value = ts_key_value[ts_bytes_len + key_len:]
+            output = value, ts_int
+        elif include_value:
+            file.seek(ts_bytes_len + key_len, 1)
+            output = (file.read(value_len), None)
+        elif include_ts:
+            output = (None, bytes_to_int(file.read(ts_bytes_len)))
+        else:
+            raise ValueError('include_value and/or include_timestamp must be True.')
+    else:
+        output = False
 
     return output
 
@@ -389,13 +373,12 @@ def iter_keys_values(file, n_buckets, include_key, include_value, include_ts=Fal
     return iter_keys_value_from_start_end_pos(file, start, end, include_key, include_value, include_ts, ts_bytes_len)
 
 
-def assign_delete_flag(file, key, n_buckets):
+def assign_delete_flag(file, key_hash, n_buckets):
     """
     Assigns 0 at the key hash index and the key/value data block.
     """
     index_len = key_hash_len + n_bytes_file
 
-    key_hash = hash_key(key)
     index_bucket = get_index_bucket(key_hash, n_buckets)
     bucket_index_pos = get_bucket_index_pos(index_bucket)
     first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
@@ -428,7 +411,7 @@ def assign_delete_flag(file, key, n_buckets):
         return False
 
 
-def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, write_buffer_size, timestamp=None, ts_bytes_len=0):
+def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, buffer_index_set, write_buffer_size, timestamp=None, ts_bytes_len=0):
     """
 
     """
@@ -462,6 +445,7 @@ def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, wr
     data_pos_bytes = int_to_bytes(file_len + bd_pos, n_bytes_file)
 
     buffer_index.extend(key_hash + data_pos_bytes)
+    buffer_index_set.add(key_hash)
     buffer_data.extend(write_bytes)
 
     return n_keys
@@ -487,7 +471,7 @@ def flush_data_buffer(file, buffer_data, write_pos):
         return write_pos
 
 
-def update_index(file, buffer_index, n_buckets):
+def update_index(file, buffer_index, buffer_index_set, n_buckets):
     """
 
     """
@@ -499,6 +483,7 @@ def update_index(file, buffer_index, n_buckets):
     n = int(buffer_len/one_extra_index_bytes_len)
 
     n_keys = 0
+    # for key_hash, new_data_block_pos_bytes in buffer_index.items():
     for i in range(n):
         start = i * one_extra_index_bytes_len
         end = start + one_extra_index_bytes_len
@@ -547,6 +532,7 @@ def update_index(file, buffer_index, n_buckets):
             n_keys += 1
 
     buffer_index.clear()
+    buffer_index_set.clear()
 
     return n_keys
 
@@ -568,7 +554,7 @@ def clear(file, n_buckets, n_keys_pos, write_buffer_size):
     file.flush()
 
 
-def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, write_buffer_size, ts_bytes_len, buffer_data, buffer_index):
+def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, write_buffer_size, ts_bytes_len, buffer_data, buffer_index, buffer_index_set):
     """
 
     """
@@ -651,12 +637,13 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
             bd_space = write_buffer_size - bd_pos
             if write_len > bd_space:
                 data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-                n_keys += update_index(file, buffer_index, n_buckets)
+                n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
                 bd_pos = 0
 
             ## Append to buffers
             data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
 
+            # buffer_index[key_hash] = data_pos_bytes
             buffer_index.extend(key_hash + data_pos_bytes)
             buffer_data.extend(write_bytes)
         else:
@@ -668,7 +655,7 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     ## Finish writing if there's data left in buffer
     if buffer_data:
         data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-        n_keys += update_index(file, buffer_index, n_buckets)
+        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
 
     os.ftruncate(file.fileno(), data_block_write_start_pos)
     os.fsync(file.fileno())
@@ -706,6 +693,10 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
     # self._platform = sys.platform
 
+    self._buffer_data = bytearray()
+    self._buffer_index = bytearray()
+    self._buffer_index_set = set()
+
     if fp_exists:
         if write:
             self._file = io.open(fp, 'r+b', buffering=0)
@@ -713,8 +704,8 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             # self._file_mmap = mmap.mmap(self._fd, 0)
             # self._file_mmap = None
 
-            self._buffer_data = bytearray()
-            self._buffer_index = bytearray()
+            # self._buffer_data = bytearray()
+            # self._buffer_index = {}
 
             ## Locks
             portalocker.lock(self._file, portalocker.LOCK_EX)
@@ -726,8 +717,8 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             # self._fd = self._file.fileno()
             # self._file_mmap = mmap.mmap(self._fd, 0, access=mmap.ACCESS_READ)
             # self._file_mmap = None
-            self._buffer_data = None
-            self._buffer_index = None
+            # self._buffer_data = None
+            # self._buffer_index = None
 
             ## Lock
             portalocker.lock(self._file, portalocker.LOCK_SH)
@@ -809,8 +800,8 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         self._file = io.open(fp, 'w+b', buffering=0)
         # self._fd = self._file.fileno()
 
-        self._buffer_data = bytearray()
-        self._buffer_index = bytearray()
+        # self._buffer_data = bytearray()
+        # self._buffer_index = {}
 
         ## Locks
         portalocker.lock(self._file, portalocker.LOCK_EX)
@@ -1010,20 +1001,24 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     self._file_path = fp
     # self._platform = sys.platform
 
+    self._buffer_data = bytearray()
+    self._buffer_index = bytearray()
+    self._buffer_index_set = set()
+
     if fp_exists:
         if write:
             self._file = io.open(fp, 'r+b', buffering=0)
 
-            self._buffer_data = bytearray()
-            self._buffer_index = bytearray()
+            # self._buffer_data = bytearray()
+            # self._buffer_index = {}
 
             ## Locks
             portalocker.lock(self._file, portalocker.LOCK_EX)
             self._thread_lock = Lock()
         else:
             self._file = io.open(fp, 'rb', buffering=0)
-            self._buffer_data = None
-            self._buffer_index = None
+            # self._buffer_data = None
+            # self._buffer_index = None
 
             ## Lock
             portalocker.lock(self._file, portalocker.LOCK_SH)
@@ -1095,8 +1090,8 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         self._file = io.open(fp, 'w+b', buffering=0)
         # self._fd = self._file.fileno()
 
-        self._buffer_data = bytearray()
-        self._buffer_index = bytearray()
+        # self._buffer_data = bytearray()
+        # self._buffer_index = {}
 
         ## Locks
         portalocker.lock(self._file, portalocker.LOCK_EX)
@@ -1199,25 +1194,20 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_time
     return init_write_bytes
 
 
-def get_value_fixed(file, key, n_buckets, value_len):
+def get_value_fixed(file, key_hash, n_buckets, value_len):
     """
     Combines everything necessary to return a value.
     """
-    value = False
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    if data_block_pos:
+        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
+        file.seek(key_len_pos)
+        key_len = bytes_to_int(file.read(n_bytes_key))
 
-    key_hash = hash_key(key)
-    index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
-    first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
-    if first_data_block_pos:
-        data_block_pos = get_last_data_block_pos(file, key_hash, first_data_block_pos)
-        if data_block_pos:
-            key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-            file.seek(key_len_pos)
-            key_len = bytes_to_int(file.read(n_bytes_key))
-
-            file.seek(key_len, 1)
-            value = file.read(value_len)
+        file.seek(key_len, 1)
+        value = file.read(value_len)
+    else:
+        value = False
 
     return value
 
@@ -1258,7 +1248,7 @@ def iter_keys_values_fixed(file, n_buckets, include_key, include_value, value_le
             file.seek(key_len + value_len, 1)
 
 
-def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_index, write_buffer_size):
+def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_index, buffer_index_set, write_buffer_size):
     """
 
     """
@@ -1287,6 +1277,7 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
     data_pos_bytes = int_to_bytes(file_len + bd_pos, n_bytes_file)
 
     buffer_index.extend(key_hash + data_pos_bytes)
+    buffer_index_set.add(key_hash)
     buffer_data.extend(write_bytes)
 
     return n_keys
@@ -1335,7 +1326,7 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
 #     return removed_n_bytes
 
 
-def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_len, write_buffer_size, buffer_data, buffer_index):
+def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_len, write_buffer_size, buffer_data, buffer_index, buffer_index_set):
     """
 
     """
@@ -1408,7 +1399,7 @@ def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_
             bd_space = write_buffer_size - bd_pos
             if write_len > bd_space:
                 data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-                n_keys += update_index(file, buffer_index, n_buckets)
+                n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
                 bd_pos = 0
 
             ## Append to buffers
@@ -1425,7 +1416,7 @@ def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_
     ## Finish writing if there's data left in buffer
     if buffer_data:
         data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-        n_keys += update_index(file, buffer_index, n_buckets)
+        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
 
     os.ftruncate(file.fileno(), data_block_write_start_pos)
     os.fsync(file.fileno())
