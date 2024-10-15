@@ -275,14 +275,16 @@ def test_set_items_get_items(file_path):
 
     with VariableValue(file_path, 'w') as f:
         f[50] = [0, 0]
-        value = f[10]
+        value1 = f[10]
+        value2 = f[50]
+        assert (value1 == data_dict[10]) and (value2 == [0, 0])
 
-    with VariableValue(file_path) as f:
-        value = f[50]
-        assert value == [0, 0]
+    # with VariableValue(file_path) as f:
+    #     value = f[50]
+    #     assert value == [0, 0]
 
-        value = f[10]
-        assert value == data_dict[10]
+    #     value = f[10]
+    #     assert value == data_dict[10]
 
 
 ## Always make this last!!!
