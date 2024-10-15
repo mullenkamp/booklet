@@ -1405,7 +1405,7 @@ def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_
             ## Append to buffers
             data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
 
-            buffer_index[key_hash] = data_pos_bytes
+            buffer_index.extend(key_hash + data_pos_bytes)
             buffer_data.extend(write_bytes)
         else:
             removed_count += 1

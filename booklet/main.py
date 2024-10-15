@@ -580,7 +580,7 @@ class FixedValue(Booklet):
         if self.writable:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size)
+                    n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size)
                     self._n_keys += n_extra_keys
 
         else:
