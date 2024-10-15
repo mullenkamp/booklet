@@ -26,8 +26,8 @@ import orjson
 #     fcntl_import = False
 
 
-# import utils
-from . import utils
+import utils
+# from . import utils
 
 # import serializers
 # from . import serializers
@@ -306,10 +306,12 @@ class Booklet(MutableMapping):
         """
         Prunes the old keys and associated values. Returns the number of removed items. The method can also prune remove keys/values older than the timestamp. The user can also reindex the booklet file. False does no reindexing, True increases the n_buckets to a preassigned value, or an int of the n_buckets. True can only be used if the default n_buckets were used at original initialisation.
         """
+        self.sync()
+
         if self.writable:
+
             with self._thread_lock:
-                self.sync()
-                n_keys, removed_count, n_buckets = utils.prune_file(self._file, timestamp, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index)
+                n_keys, removed_count, n_buckets = utils.prune_file(self._file, timestamp, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set)
                 self._n_keys = n_keys
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
@@ -591,7 +593,7 @@ class FixedValue(Booklet):
         """
         if self.writable:
             with self._thread_lock:
-                n_keys, removed_count, n_buckets = utils.prune_file_fixed(self._file, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index)
+                n_keys, removed_count, n_buckets = utils.prune_file_fixed(self._file, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index, self._buffer_index_set)
                 self._n_keys = n_keys
 
                 if n_buckets != self._n_buckets:
@@ -617,7 +619,7 @@ class FixedValue(Booklet):
     def __setitem__(self, key, value):
         if self.writable:
             with self._thread_lock:
-                n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._write_buffer_size)
+                n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size)
                 self._n_keys += n_extra_keys
 
         else:

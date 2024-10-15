@@ -29,8 +29,8 @@ from typing import Union, Optional
 import struct
 # from time import time
 
-# import serializers
-from . import serializers
+import serializers
+# from . import serializers
 
 ############################################
 ### Parameters
@@ -554,7 +554,7 @@ def clear(file, n_buckets, n_keys_pos, write_buffer_size):
     file.flush()
 
 
-def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, write_buffer_size, ts_bytes_len, buffer_data, buffer_index):
+def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, write_buffer_size, ts_bytes_len, buffer_data, buffer_index, buffer_index_set):
     """
 
     """
@@ -637,7 +637,7 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
             bd_space = write_buffer_size - bd_pos
             if write_len > bd_space:
                 data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-                n_keys += update_index(file, buffer_index, n_buckets)
+                n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
                 bd_pos = 0
 
             ## Append to buffers
@@ -655,7 +655,7 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     ## Finish writing if there's data left in buffer
     if buffer_data:
         data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-        n_keys += update_index(file, buffer_index, n_buckets)
+        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
 
     os.ftruncate(file.fileno(), data_block_write_start_pos)
     os.fsync(file.fileno())
@@ -1326,7 +1326,7 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
 #     return removed_n_bytes
 
 
-def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_len, write_buffer_size, buffer_data, buffer_index):
+def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_len, write_buffer_size, buffer_data, buffer_index, buffer_index_set):
     """
 
     """
@@ -1399,7 +1399,7 @@ def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_
             bd_space = write_buffer_size - bd_pos
             if write_len > bd_space:
                 data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-                n_keys += update_index(file, buffer_index, n_buckets)
+                n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
                 bd_pos = 0
 
             ## Append to buffers
@@ -1416,7 +1416,7 @@ def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_
     ## Finish writing if there's data left in buffer
     if buffer_data:
         data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-        n_keys += update_index(file, buffer_index, n_buckets)
+        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
 
     os.ftruncate(file.fileno(), data_block_write_start_pos)
     os.fsync(file.fileno())
