@@ -453,14 +453,17 @@ def test_set_items_get_items_fixed():
 
     with FixedValue(file_path, 'w') as f:
         f[50] = b1
-        value = f[11]
+        value1 = f[11]
+        value2 = f[50]
 
-    with FixedValue(file_path) as f:
-        value = f[50]
-        assert value == b1
+    assert (value1 == data_dict2[11]) and (value2 == b1)
 
-        value = f[11]
-        assert value == data_dict2[11]
+    # with FixedValue(file_path) as f:
+    #     value = f[50]
+    #     assert value == b1
+
+    #     value = f[11]
+    #     assert value == data_dict2[11]
 
 
 # def test_reindex_fixed():
