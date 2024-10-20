@@ -94,9 +94,7 @@ class Booklet(MutableMapping):
         Get the metadata. Optionally include the timestamp in the output.
         Will return None if no metadata has been assigned.
         """
-        key_hash = utils.hash_key(utils.metadata_key_bytes)
-
-        output = utils.get_value_ts(self._file, key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len)
+        output = utils.get_value_ts(self._file, utils.metadata_key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len)
 
         if output:
             value, ts_int = output
@@ -142,14 +140,23 @@ class Booklet(MutableMapping):
         return value
 
     def keys(self):
+        if self._buffer_index_set:
+            self.sync()
+
         for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len):
             yield self._post_key(key)
 
     def items(self):
+        if self._buffer_index_set:
+            self.sync()
+
         for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len):
             yield self._post_key(key), self._post_value(value)
 
     def values(self):
+        if self._buffer_index_set:
+            self.sync()
+
         for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len):
             yield self._post_value(value)
 
@@ -158,6 +165,9 @@ class Booklet(MutableMapping):
         Return an iterator for timestamps for all keys. Optionally add values to the iterator.
         """
         if self._init_timestamps:
+            if self._buffer_index_set:
+                self.sync()
+
             if include_value:
                 for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len):
                     if decode_value:
@@ -244,7 +254,8 @@ class Booklet(MutableMapping):
                 key_bytes = self._pre_key(key)
                 key_hash = utils.hash_key(key_bytes)
 
-                success = utils.set_timestamp(self._file, key_hash, self._n_buckets, timestamp)
+                with self._thread_lock:
+                    success = utils.set_timestamp(self._file, key_hash, self._n_buckets, timestamp)
 
                 if not success:
                     raise KeyError(key)
@@ -260,9 +271,9 @@ class Booklet(MutableMapping):
         The timestamp must be either None, an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone. None will create a timestamp of now.
         """
         if self.writable:
+            if encode_value:
+                value = self._pre_value(value)
             with self._thread_lock:
-                if encode_value:
-                    value = self._pre_value(value)
                 n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len)
                 self._n_keys += n_extra_keys
         else:
@@ -322,7 +333,7 @@ class Booklet(MutableMapping):
                     self._file.write(utils.int_to_bytes(n_buckets, 4))
                     self._file.flush()
 
-                return removed_count
+            return removed_count
         else:
             raise ValueError('File is open for read only.')
 
@@ -345,18 +356,20 @@ class Booklet(MutableMapping):
         Delete flags are written immediately as are the number of total deletes. This ensures that there are no sync issues. Deletes are generally rare, so this shouldn't impact most use cases.
         """
         if self.writable:
-            self.sync()
-            with self._thread_lock:
+            if self._buffer_index_set:
+                self.sync()
+
                 key_bytes = self._pre_key(key)
                 key_hash = utils.hash_key(key_bytes)
 
-                del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets)
-                if del_bool:
-                    self._n_keys -= 1
-                    self._file.seek(self._n_keys_pos)
-                    self._file.write(utils.int_to_bytes(self._n_keys, 4))
-                else:
-                    raise KeyError(key)
+                with self._thread_lock:
+                    del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets)
+                    if del_bool:
+                        self._n_keys -= 1
+                        self._file.seek(self._n_keys_pos)
+                        self._file.write(utils.int_to_bytes(self._n_keys, 4))
+                    else:
+                        raise KeyError(key)
         else:
             raise ValueError('File is open for read only.')
 
@@ -373,7 +386,6 @@ class Booklet(MutableMapping):
                 self._n_keys = 0
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
-
         else:
             raise ValueError('File is open for read only.')
 
