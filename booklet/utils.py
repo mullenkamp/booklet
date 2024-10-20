@@ -54,8 +54,9 @@ key_hash_len = 13
 uuid_variable_blt = b'O~\x8a?\xe7\\GP\xadC\nr\x8f\xe3\x1c\xfe'
 uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 
-metadata_key_bytes = b'\xad\xb0\x1e\xbc\x1b\xa3C>\xb0CRw\xd1g\x86\xee'
-metadata_key_hash = b"`\x1bF\xbbh\x01\xa9\xb7\x8d\x98\x10k'"
+# metadata_key_bytes0 = b'\xad\xb0\x1e\xbc\x1b\xa3C>\xb0CRw\xd1g\x86\xee'
+metadata_key_bytes = b'adb01ebc1ba3433eb043527'
+metadata_key_hash = b'B~\xf5\t\xe6\xef,\xbf\x16nn\x82\x01'
 
 current_version = 4
 current_version_bytes = current_version.to_bytes(2, 'little', signed=False)
@@ -238,7 +239,7 @@ def get_last_data_block_pos(file, key_hash, n_buckets):
                     return 0
             else:
                 return 0
-    
+
             data_block_pos = next_data_block_pos
     else:
         return 0
@@ -322,21 +323,31 @@ def get_value_ts(file, key_hash, n_buckets, include_value=True, include_ts=False
     return output
 
 
-def iter_keys_value_from_start_end_pos(file, start, end, include_key, include_value, include_ts=False, ts_bytes_len=0):
+def iter_keys_value_from_start_end_pos(file, start, end, include_key, include_value, include_ts, ts_bytes_len):
     """
 
     """
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
     init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
 
-    file.seek(start)
-    while file.tell() < end:
+    next_block_pos = start
+
+    while next_block_pos < end:
+        # lock.acquire()
+
+        file.seek(next_block_pos)
         init_data_block = file.read(init_data_block_len)
+
         next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
         key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
         value_len = bytes_to_int(init_data_block[one_extra_index_bytes_len + n_bytes_key:])
+        ts_key_value_len = ts_bytes_len + key_len + value_len
         if next_data_block_pos: # A value of 0 means it was deleted
-            ts_key_value = file.read(ts_bytes_len + key_len + value_len)
+            ts_key_value = file.read(ts_key_value_len)
+
+            # lock.release()
+            next_block_pos += init_data_block_len + ts_key_value_len
+
             key = ts_key_value[ts_bytes_len:ts_bytes_len + key_len]
             if key != metadata_key_bytes:
                 if include_ts:
@@ -360,10 +371,13 @@ def iter_keys_value_from_start_end_pos(file, start, end, include_key, include_va
                 else:
                     raise ValueError('I need to include something for iter_keys_values.')
         else:
-            file.seek(ts_bytes_len + key_len + value_len, 1)
+            # lock.release()
+            next_block_pos += init_data_block_len + ts_key_value_len
+
+            # file.seek(ts_bytes_len + key_len + value_len, 1)
 
 
-def iter_keys_values(file, n_buckets, include_key, include_value, include_ts=False, ts_bytes_len=0):
+def iter_keys_values(file, n_buckets, include_key, include_value, include_ts, ts_bytes_len):
     """
 
     """
@@ -438,7 +452,7 @@ def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, bu
     bd_space = write_buffer_size - bd_pos
     if write_len > bd_space:
         file_len = flush_data_buffer(file, buffer_data, file_len)
-        n_keys += update_index(file, buffer_index, n_buckets)
+        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
         bd_pos = 0
 
     ## Append to buffers
@@ -697,28 +711,18 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
     self._buffer_index = bytearray()
     self._buffer_index_set = set()
 
+    self._thread_lock = Lock()
+
     if fp_exists:
         if write:
             self._file = io.open(fp, 'r+b', buffering=0)
-            # self._fd = self._file.fileno()
-            # self._file_mmap = mmap.mmap(self._fd, 0)
-            # self._file_mmap = None
-
-            # self._buffer_data = bytearray()
-            # self._buffer_index = {}
 
             ## Locks
             portalocker.lock(self._file, portalocker.LOCK_EX)
             # if self._platform.startswith('linux'):
             #     flock(self._fd, LOCK_EX)
-            self._thread_lock = Lock()
         else:
             self._file = io.open(fp, 'rb', buffering=0)
-            # self._fd = self._file.fileno()
-            # self._file_mmap = mmap.mmap(self._fd, 0, access=mmap.ACCESS_READ)
-            # self._file_mmap = None
-            # self._buffer_data = None
-            # self._buffer_index = None
 
             ## Lock
             portalocker.lock(self._file, portalocker.LOCK_SH)
@@ -733,12 +737,6 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         if sys_uuid != uuid_variable_blt:
             portalocker.lock(self._file, portalocker.LOCK_UN)
             raise TypeError('This is not the correct file type.')
-
-        # TODO : Create a process that will recreate the index if the data end pos is < 200. This can be done by rolling over the data blocks and iteratively writing the indexes.
-        # At the moment, I'll just have it fail.
-        # if self._data_end_pos < sub_index_init_pos:
-        #     portalocker.lock(self._file, portalocker.LOCK_UN)
-        #     raise FileExistsError('File has a corrupted index and will need to be rebuilt.')
 
         ## Read the rest of the base parameters
         read_base_params_variable(self, base_param_bytes, key_serializer, value_serializer)
@@ -798,27 +796,17 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         self._n_keys_pos = n_keys_pos
 
         self._file = io.open(fp, 'w+b', buffering=0)
-        # self._fd = self._file.fileno()
-
-        # self._buffer_data = bytearray()
-        # self._buffer_index = {}
 
         ## Locks
         portalocker.lock(self._file, portalocker.LOCK_EX)
         # if self._platform.startswith('linux'):
         #     flock(self._fd, LOCK_EX)
-        self._thread_lock = Lock()
 
         ## Write new file
         with self._thread_lock:
             self._file.write(init_bytes)
 
             write_init_bucket_indexes(self._file, self._n_buckets, sub_index_init_pos, write_buffer_size)
-            # self._file.flush()
-
-            # self._file_mmap = mmap.mmap(self._fd, 0)
-            # self._file_mmap = None
-            # self._file_mmap.resize(sub_index_init_pos + (self._n_buckets * n_bytes_file))
 
     ## Create finalizer
     self._finalizer = weakref.finalize(self, close_files, self._file, n_keys_crash, self._n_keys_pos, self.writable)
@@ -1005,20 +993,17 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     self._buffer_index = bytearray()
     self._buffer_index_set = set()
 
+    self._thread_lock = Lock()
+
     if fp_exists:
         if write:
             self._file = io.open(fp, 'r+b', buffering=0)
 
-            # self._buffer_data = bytearray()
-            # self._buffer_index = {}
-
             ## Locks
             portalocker.lock(self._file, portalocker.LOCK_EX)
-            self._thread_lock = Lock()
+
         else:
             self._file = io.open(fp, 'rb', buffering=0)
-            # self._buffer_data = None
-            # self._buffer_index = None
 
             ## Lock
             portalocker.lock(self._file, portalocker.LOCK_SH)
@@ -1088,16 +1073,11 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         self._n_keys_pos = n_keys_pos
 
         self._file = io.open(fp, 'w+b', buffering=0)
-        # self._fd = self._file.fileno()
-
-        # self._buffer_data = bytearray()
-        # self._buffer_index = {}
 
         ## Locks
         portalocker.lock(self._file, portalocker.LOCK_EX)
         # if self._platform.startswith('linux'):
         #     flock(self._fd, LOCK_EX)
-        self._thread_lock = Lock()
 
         ## Write new file
         with self._thread_lock:

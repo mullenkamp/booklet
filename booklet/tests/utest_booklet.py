@@ -15,6 +15,7 @@ from hashlib import blake2s
 import mmap
 from time import time
 from sqlitedict import SqliteDict
+from threading import Lock
 
 ##############################################
 ### Parameters
@@ -88,6 +89,27 @@ timestamp = utils.make_timestamp_int()
 self.prune(timestamp=timestamp)
 
 self.close()
+
+
+lock = Lock()
+
+def thread_lock_test1():
+    """
+
+    """
+    with lock:
+        pass
+
+def thread_lock_test2():
+    """
+
+    """
+    lock.acquire()
+    lock.release()
+
+
+def pass_test():
+    pass
 
 # data_dict2 = {key: blake2s(key.to_bytes(4, 'little', signed=True), digest_size=13).digest() for key in range(2, 100)}
 # b1 = blake2s(b'0', digest_size=13).digest()
@@ -169,6 +191,31 @@ t1 = time()
 test_index_speed2(n)
 print(time() - t1)
 
+os.remove(file_path)
+
+f = VariableValue(file_path, 'r')
+
+iter1 = f.items()
+
+for k, v in iter1:
+    if k == 6:
+        break
+
+val = f[1]
+
+
+def test_open_read():
+    with VariableValue(file_path, 'r') as f:
+        pass
+
+def test_open_write():
+    with VariableValue(file_path, 'w') as f:
+        pass
+
+def test_create_file():
+    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
+        pass
+
 
 file_path = '/home/mike/data/cache/test1.sqlite'
 
@@ -206,6 +253,8 @@ print(time() - t1)
 t1 = time()
 test_index_speed2(n)
 print(time() - t1)
+
+
 
 
 # def test_resize1():
