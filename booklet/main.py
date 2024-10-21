@@ -359,17 +359,17 @@ class Booklet(MutableMapping):
             if self._buffer_index_set:
                 self.sync()
 
-                key_bytes = self._pre_key(key)
-                key_hash = utils.hash_key(key_bytes)
+            key_bytes = self._pre_key(key)
+            key_hash = utils.hash_key(key_bytes)
 
-                with self._thread_lock:
-                    del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets)
-                    if del_bool:
-                        self._n_keys -= 1
-                        self._file.seek(self._n_keys_pos)
-                        self._file.write(utils.int_to_bytes(self._n_keys, 4))
-                    else:
-                        raise KeyError(key)
+            with self._thread_lock:
+                del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets)
+                if del_bool:
+                    self._n_keys -= 1
+                    self._file.seek(self._n_keys_pos)
+                    self._file.write(utils.int_to_bytes(self._n_keys, 4))
+                else:
+                    raise KeyError(key)
         else:
             raise ValueError('File is open for read only.')
 

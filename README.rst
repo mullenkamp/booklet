@@ -4,7 +4,7 @@ Booklet
 Introduction
 ------------
 Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. Booklet uses the `MutableMapping <https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes>`_ class API which is the same as python's dictionary in addition to some `dbm <https://docs.python.org/3/library/dbm.html>`_ methods (i.e. sync and prune).
-It is thread-safe (using thread locks on writes) and multiprocessing-safe (using file locks).
+It is thread-safe on writes (using thread locks) and multiprocessing-safe (using file locks). Reads are not thread safe.
 
 When an error occurs (e.g. trying to access a key that doesn't exist), booklet will properly close the file and remove the file locks. This will not sync any changes, so the user will lose any changes that were not synced. There will be circumstances that can occur that will not properly close the file, so care still needs to be made.
 
