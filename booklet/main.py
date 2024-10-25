@@ -26,8 +26,8 @@ import weakref
 #     fcntl_import = False
 
 
-import utils
-# from . import utils
+# import utils
+from . import utils
 
 # import serializers
 # from . import serializers
