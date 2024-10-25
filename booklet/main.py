@@ -3,7 +3,7 @@
 """
 
 """
-# import io
+import io
 # import mmap
 import pathlib
 # import inspect
@@ -16,7 +16,7 @@ import portalocker
 import orjson
 # import datetime
 # import time
-# import weakref
+import weakref
 # from multiprocessing import Manager, shared_memory
 
 # try:
@@ -26,8 +26,8 @@ import orjson
 #     fcntl_import = False
 
 
-# import utils
-from . import utils
+import utils
+# from . import utils
 
 # import serializers
 # from . import serializers
@@ -398,6 +398,25 @@ class Booklet(MutableMapping):
     # def __del__(self):
     #     self.close()
     #     self._file_path.unlink()
+
+
+    def reopen(self, flag):
+        """
+        Reopens the file. The flag must be either 'r' or 'w'.
+        """
+        self.close()
+        if flag == 'w':
+            self._file = io.open(self._file_path, 'r+b', buffering=0)
+            portalocker.lock(self._file, portalocker.LOCK_EX)
+            self.writable = True
+        elif flag == 'r':
+            self._file = io.open(self._file_path, 'rb', buffering=0)
+            portalocker.lock(self._file, portalocker.LOCK_SH)
+            self.writable = False
+        else:
+            raise ValueError("flag must be either 'r' or 'w'.")
+
+        self._finalizer = weakref.finalize(self, utils.close_files, self._file, utils.n_keys_crash, self._n_keys_pos, self.writable)
 
 
     def sync(self):
