@@ -402,7 +402,7 @@ class Booklet(MutableMapping):
 
     def reopen(self, flag):
         """
-        Reopens the file. The flag must be either 'r' or 'w'.
+        Reopens the file on a previously initialized Booklet. The flag must be either 'r' or 'w'.
         """
         self.close()
         if flag == 'w':
