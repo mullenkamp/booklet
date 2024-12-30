@@ -680,6 +680,29 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     return n_keys, removed_count, n_buckets
 
 
+# def open_file(file_path, flag):
+#     """
+
+#     """
+#     fp = pathlib.Path(file_path)
+#     if flag == "r":  # Open existing database for reading only (default)
+#         write = False
+#         fp_exists = True
+#     elif flag == "w":  # Open existing database for reading and writing
+#         write = True
+#         fp_exists = True
+#     elif flag == "c":  # Open database for reading and writing, creating it if it doesn't exist
+#         fp_exists = fp.exists()
+#         write = True
+#     elif flag == "n":  # Always create a new, empty database, open for reading and writing
+#         write = True
+#         fp_exists = False
+#     else:
+#         raise ValueError("Invalid flag")
+
+
+
+
 def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size, init_timestamps, init_bytes):
     """
 
