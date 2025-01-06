@@ -6,9 +6,6 @@ Created on Thu Jan  5 11:04:13 2023
 @author: mike
 """
 import os
-import sys
-# import uuid
-# import fastuuid as uuid
 import uuid6 as uuid
 # import math
 import io
@@ -26,7 +23,6 @@ import weakref
 import pathlib
 import orjson
 from typing import Union, Optional
-import struct
 # from time import time
 
 # import serializers
