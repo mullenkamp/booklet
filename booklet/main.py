@@ -3,7 +3,7 @@
 """
 
 """
-# import io
+import io
 # import mmap
 import pathlib
 # import inspect
@@ -16,7 +16,7 @@ import portalocker
 import orjson
 # import datetime
 # import time
-# import weakref
+import weakref
 # from multiprocessing import Manager, shared_memory
 
 # try:
@@ -400,6 +400,25 @@ class Booklet(MutableMapping):
     #     self._file_path.unlink()
 
 
+    def reopen(self, flag):
+        """
+        Reopens the file on a previously initialized Booklet. The flag must be either 'r' or 'w'.
+        """
+        self.close()
+        if flag == 'w':
+            self._file = io.open(self._file_path, 'r+b', buffering=0)
+            portalocker.lock(self._file, portalocker.LOCK_EX)
+            self.writable = True
+        elif flag == 'r':
+            self._file = io.open(self._file_path, 'rb', buffering=0)
+            portalocker.lock(self._file, portalocker.LOCK_SH)
+            self.writable = False
+        else:
+            raise ValueError("flag must be either 'r' or 'w'.")
+
+        self._finalizer = weakref.finalize(self, utils.close_files, self._file, utils.n_keys_crash, self._n_keys_pos, self.writable)
+
+
     def sync(self):
         """
         Sync the data buffers to disk. This also occurs when the file is closed. This must occur to ensure the data is persisted to disk.
@@ -439,7 +458,7 @@ class Booklet(MutableMapping):
 ### Variable length value Booklet
 
 
-class VariableValue(Booklet):
+class VariableLengthValue(Booklet):
     """
     Open a persistent dictionary for reading and writing. This class allows for variable length values (and keys). On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag (unless a custom serializer is passed).
 
@@ -503,7 +522,7 @@ class VariableValue(Booklet):
 ### Fixed length value Booklet
 
 
-class FixedValue(Booklet):
+class FixedLengthValue(Booklet):
     """
     Open a persistent dictionary for reading and writing. This class required a globally fixed value length. For example, this can be used for fixed length hashes or timestamps. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
@@ -669,6 +688,9 @@ def open(
         The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
         This is only used when the file is open for writing.
 
+    init_timestamps : bool
+        Should timestamps be initialized in the object? This cannot be changed later.
+
     Returns
     -------
     Booklet
@@ -692,4 +714,4 @@ def open(
     +---------+-------------------------------------------+
 
     """
-    return VariableValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)
+    return VariableLengthValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)

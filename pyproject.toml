@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.26.1"]
 build-backend = "hatchling.build"
 
 [project]
@@ -19,10 +19,20 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
 ]
+
+requires-python = ">=3.10"
 dependencies = ['portalocker', 'orjson', 'uuid6>=2024.07.10']
+
+[dependency-groups]
+dev = [
+  "spyder-kernels==2.5",
+  "black",
+  "mypy",
+  "ruff",
+  "pytest",
+  "pytest-cov",
+]
 
 [tool.hatch.envs.default]
 # type = "container"
@@ -56,6 +66,9 @@ Homepage = "https://github.com/mullenkamp/booklet"
 [tool.hatch.build.targets.sdist]
 include = [
     "/booklet",
+]
+exclude = [
+  "/booklet/tests/*",
 ]
 
 [tool.hatch.version]
