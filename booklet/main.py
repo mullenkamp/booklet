@@ -212,7 +212,7 @@ class Booklet(MutableMapping):
 
         value = utils.get_value(self._file, key_hash, self._n_buckets, self._ts_bytes_len)
 
-        if value:
+        if isinstance(value, bytes):
             return self._post_value(value)
         else:
             return default

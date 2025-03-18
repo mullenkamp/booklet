@@ -172,7 +172,7 @@ def write_init_bucket_indexes(file, n_buckets, index_pos, write_buffer_size):
     """
 
     """
-    init_end_pos_bytes = int_to_bytes(0, n_bytes_file)
+    init_end_pos_bytes = int_to_bytes(1, n_bytes_file)
 
     file.seek(index_pos)
     temp_bytes = bytearray()
@@ -210,7 +210,10 @@ def get_first_data_block_pos(file, bucket_index_pos):
     file.seek(bucket_index_pos)
     data_block_pos = bytes_to_int(file.read(n_bytes_file))
 
-    return data_block_pos
+    if data_block_pos > 1:
+        return data_block_pos
+    else:
+        return 0
 
 
 def get_last_data_block_pos(file, key_hash, n_buckets):
@@ -405,7 +408,6 @@ def assign_delete_flag(file, key_hash, n_buckets):
                     file.seek(-n_bytes_file, 1)
                     file.write(b'\x00\x00\x00\x00\x00\x00')
                     file.seek(previous_data_index_pos)
-                    # file.write(b'\x01\x00\x00\x00\x00\x00')
                     file.write(next_data_block_pos_bytes)
                     return True
 
