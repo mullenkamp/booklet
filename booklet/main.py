@@ -217,6 +217,14 @@ class Booklet(MutableMapping):
         else:
             return default
 
+    def get_items(self, keys, default=None):
+        """
+        Return an iterator of the values associated with the input keys. Missing keys will return the default.
+        """
+        for key in keys:
+            value = self.get(key, default=default)
+            yield key, value
+
     def get_timestamp(self, key, include_value=False, decode_value=True, default=None):
         """
         Get a timestamp associated with a key. Optionally include the value.
@@ -273,6 +281,8 @@ class Booklet(MutableMapping):
         if self.writable:
             if encode_value:
                 value = self._pre_value(value)
+            elif not isinstance(value, bytes):
+                raise TypeError('If encode_value is False, then value must be a bytes object.')
             with self._thread_lock:
                 n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len)
                 self._n_keys += n_extra_keys
@@ -280,32 +290,13 @@ class Booklet(MutableMapping):
             raise ValueError('File is open for read only.')
 
 
-    # def get_data(self, key, decode_value=True, default=None):
-    #     """
-
-    #     """
-    #     output = utils.get_value_ts(self._file, self._pre_key(key), self._n_buckets, True, True, self._ts_bytes_len)
-
-    #     if output:
-    #         value, ts_int = output
-    #         if decode_value:
-    #             value = self._post_value(value)
-
-    #         if self._init_timestamps:
-    #             return value, ts_int
-    #         else:
-    #             return value
-    #     else:
-    #         return default
-
-
-    def update(self, key_value_dict):
+    def update(self, key_value: MutableMapping):
         """
 
         """
         if self.writable:
             with self._thread_lock:
-                for key, value in key_value_dict.items():
+                for key, value in key_value.items():
                     n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, None, self._ts_bytes_len)
                     self._n_keys += n_extra_keys
 
@@ -402,7 +393,7 @@ class Booklet(MutableMapping):
 
     def reopen(self, flag):
         """
-        Reopens the file on a previously initialized Booklet. The flag must be either 'r' or 'w'.
+        Reopens the file on a previously initialized Booklet. The flag must be either 'r' or 'w'. This is faster than the normal opening and closing process.
         """
         self.close()
         if flag == 'w':
