@@ -19,7 +19,7 @@ Or conda::
   conda install -c mullenkamp booklet
 
 
-I'll probably put it on conda-forge once I feel like it's up to an appropriate standard...
+I'll probably put it on conda-forge once I feel appropriately motivated...
 
 
 Serialization
@@ -100,7 +100,7 @@ When a key/value is "deleted", it's actually just flagged internally as deleted 
 
 File metadata
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-The user can assign overall metadata to the file as a json serializable object (i.e. dict or list). The methods are called set_metadata and get_metadata. The metadata is independent from all of the other key/value pairs assigned in the normal way. It won't be returned with any other methods. If metadata has not already been assigned, the get_metadata method will return None.
+The user can assign overall metadata to the file as a json serializable object (i.e. dict or list). The methods are called set_metadata and get_metadata. The metadata is independent from all of the other key/value pairs assigned in the normal way. The metadata won't be returned with any other methods. If metadata has not already been assigned, the get_metadata method will return None.
 
 .. code:: python
 
@@ -111,7 +111,21 @@ The user can assign overall metadata to the file as a json serializable object (
 
 Item timestamps
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Timestamps associated with each assigned item have been implemented, but must be turned on at file initialization. By default it's off. The timestamps are stored and returned as an int of the number of microseconds in POSIX UTC time. There are new methods to set and get the timestamps. It's quite new...so I won't supply more info until it's further tested.
+Timestamps associated with each assigned item have been implemented, but can be turned off at file initialization. By default it's on. The timestamps are stored and returned as an int of the number of microseconds in POSIX UTC time. There are new methods to set and get the timestamps. It's quite new...so please test it!
+
+.. code:: python
+
+  file_path = 'test.blt'
+  key = 'test_key2'
+  value = ['five', 6, 'seven', 8]
+  with booklet.open(file_path, 'w') as f:
+        f[key] = value
+        ts_old = f.get_timestamp(key)
+        ts_new = booklet.utils.make_timestamp_int()
+        f.set_timestamp(key, ts_new)
+
+    with booklet.open(file_path) as f:
+        ts_new = f.get_timestamp(key)
 
 
 Custom serializers
