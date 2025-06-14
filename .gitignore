@@ -18,3 +18,5 @@ dist/
 # param*.yml
 /.project
 /.pydevproject
+.venv
+uv.lock
