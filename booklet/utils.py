@@ -711,12 +711,23 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
     """
     if isinstance(file_path, io.BytesIO):
-        fp_exists = False
-        write = True
+        if file_path.seek(0, 2) > 0:
+            fp_exists = True
+            file_path.seek(0)
+        else:
+            fp_exists = False
+
+        if flag == 'r':
+            write = False
+        else:
+            write = True
+
         self._file = file_path
+        is_file = False
     else:
         fp = pathlib.Path(file_path)
         self._file_path = fp
+        is_file = True
     
         if flag == "r":  # Open existing database for reading only (default)
             write = False
@@ -743,22 +754,25 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
     self._buffer_index_set = set()
 
     self._thread_lock = Lock()
+    self._is_file = is_file
 
     if fp_exists:
         if write:
-            self._file = io.open(fp, 'r+b', buffering=0)
-
-            ## Locks
-            portalocker.lock(self._file, portalocker.LOCK_EX)
-            # if self._platform.startswith('linux'):
-            #     flock(self._fd, LOCK_EX)
+            if is_file:
+                self._file = io.open(fp, 'r+b', buffering=0)
+    
+                ## Locks
+                portalocker.lock(self._file, portalocker.LOCK_EX)
+                # if self._platform.startswith('linux'):
+                #     flock(self._fd, LOCK_EX)
         else:
-            self._file = io.open(fp, 'rb', buffering=0)
-
-            ## Lock
-            portalocker.lock(self._file, portalocker.LOCK_SH)
-            # if self._platform.startswith('linux'):
-            #     flock(self._fd, LOCK_SH)
+            if is_file:
+                self._file = io.open(fp, 'rb', buffering=0)
+    
+                ## Lock
+                portalocker.lock(self._file, portalocker.LOCK_SH)
+                # if self._platform.startswith('linux'):
+                #     flock(self._fd, LOCK_SH)
 
         ## Read in initial bytes
         base_param_bytes = self._file.read(sub_index_init_pos)
@@ -766,7 +780,8 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         ## system and version check
         sys_uuid = base_param_bytes[:16]
         if sys_uuid != uuid_variable_blt:
-            portalocker.lock(self._file, portalocker.LOCK_UN)
+            if is_file:
+                portalocker.lock(self._file, portalocker.LOCK_UN)
             raise TypeError('This is not the correct file type.')
 
         ## Read the rest of the base parameters
@@ -827,7 +842,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         self._n_keys_pos = n_keys_pos
 
         ## Locks
-        if not isinstance(file_path, io.BytesIO):
+        if is_file:
             self._file = io.open(fp, 'w+b', buffering=0)
             portalocker.lock(self._file, portalocker.LOCK_EX)
 
