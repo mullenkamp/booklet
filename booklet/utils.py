@@ -143,7 +143,12 @@ def close_files(file, n_keys, n_keys_pos, write):
         # file_mmap.flush()
         # file.flush()
 
-    portalocker.lock(file, portalocker.LOCK_UN)
+    try:
+        portalocker.lock(file, portalocker.LOCK_UN)
+    except portalocker.exceptions.LockException:
+        pass
+    except io.UnsupportedOperation:
+        pass
     file.close()
 
 
@@ -705,23 +710,28 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
     """
 
     """
-    fp = pathlib.Path(file_path)
-    self._file_path = fp
-
-    if flag == "r":  # Open existing database for reading only (default)
-        write = False
-        fp_exists = True
-    elif flag == "w":  # Open existing database for reading and writing
-        write = True
-        fp_exists = True
-    elif flag == "c":  # Open database for reading and writing, creating it if it doesn't exist
-        fp_exists = fp.exists()
-        write = True
-    elif flag == "n":  # Always create a new, empty database, open for reading and writing
-        write = True
+    if isinstance(file_path, io.BytesIO):
         fp_exists = False
+        write = True
+        self._file = file_path
     else:
-        raise ValueError("Invalid flag")
+        fp = pathlib.Path(file_path)
+        self._file_path = fp
+    
+        if flag == "r":  # Open existing database for reading only (default)
+            write = False
+            fp_exists = True
+        elif flag == "w":  # Open existing database for reading and writing
+            write = True
+            fp_exists = True
+        elif flag == "c":  # Open database for reading and writing, creating it if it doesn't exist
+            fp_exists = fp.exists()
+            write = True
+        elif flag == "n":  # Always create a new, empty database, open for reading and writing
+            write = True
+            fp_exists = False
+        else:
+            raise ValueError("Invalid flag")
 
     self.writable = write
     self._write_buffer_size = write_buffer_size
@@ -816,10 +826,11 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         self._n_keys = 0
         self._n_keys_pos = n_keys_pos
 
-        self._file = io.open(fp, 'w+b', buffering=0)
-
         ## Locks
-        portalocker.lock(self._file, portalocker.LOCK_EX)
+        if not isinstance(file_path, io.BytesIO):
+            self._file = io.open(fp, 'w+b', buffering=0)
+            portalocker.lock(self._file, portalocker.LOCK_EX)
+
         # if self._platform.startswith('linux'):
         #     flock(self._fd, LOCK_EX)
 
@@ -988,26 +999,31 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     """
 
     """
-    fp = pathlib.Path(file_path)
-
-    if flag == "r":  # Open existing database for reading only (default)
-        write = False
-        fp_exists = True
-    elif flag == "w":  # Open existing database for reading and writing
-        write = True
-        fp_exists = True
-    elif flag == "c":  # Open database for reading and writing, creating it if it doesn't exist
-        fp_exists = fp.exists()
-        write = True
-    elif flag == "n":  # Always create a new, empty database, open for reading and writing
-        write = True
+    if isinstance(file_path, io.BytesIO):
         fp_exists = False
+        write = True
+        self._file = file_path
     else:
-        raise ValueError("Invalid flag")
+        fp = pathlib.Path(file_path)
+        self._file_path = fp
+
+        if flag == "r":  # Open existing database for reading only (default)
+            write = False
+            fp_exists = True
+        elif flag == "w":  # Open existing database for reading and writing
+            write = True
+            fp_exists = True
+        elif flag == "c":  # Open database for reading and writing, creating it if it doesn't exist
+            fp_exists = fp.exists()
+            write = True
+        elif flag == "n":  # Always create a new, empty database, open for reading and writing
+            write = True
+            fp_exists = False
+        else:
+            raise ValueError("Invalid flag")
 
     self.writable = write
     self._write_buffer_size = write_buffer_size
-    self._file_path = fp
     # self._platform = sys.platform
 
     self._buffer_data = bytearray()
@@ -1093,10 +1109,10 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         self._n_keys = 0
         self._n_keys_pos = n_keys_pos
 
-        self._file = io.open(fp, 'w+b', buffering=0)
-
         ## Locks
-        portalocker.lock(self._file, portalocker.LOCK_EX)
+        if not isinstance(file_path, io.BytesIO):
+            self._file = io.open(fp, 'w+b', buffering=0)
+            portalocker.lock(self._file, portalocker.LOCK_EX)
         # if self._platform.startswith('linux'):
         #     flock(self._fd, LOCK_EX)
 

@@ -88,8 +88,8 @@ def test_threading_writes():
     assert value == data_dict[10]
 
 
-#######################
-### Set up files for following tests
+###################################################
+### Variable len value
 
 
 with booklet.open(file_path1, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=False) as f:
@@ -303,8 +303,228 @@ def test_clear(file_path):
 # f = Booklet(file_path, 'w')
 
 
-data_dict2 = {key: blake2s(key.to_bytes(4, 'little', signed=True), digest_size=13).digest() for key in range(2, 100)}
+###########################################################
+### Variable len value using BytesIO object
 
+data_dict2 = deepcopy(data_dict)
+
+
+def make_bytesio_booklet(data=None):
+    bytes_io = io.BytesIO()
+    f = booklet.open(bytes_io, 'n', key_serializer='uint4', value_serializer='pickle')
+
+    if data:
+        for key, value in data.items():
+            f[key] = value
+    
+        f.sync()
+
+    return f
+
+
+def test_set_items_bytesio():
+    f = make_bytesio_booklet(data_dict2)
+
+    value = f[10]
+
+    f.close()
+
+    assert value == data_dict2[10]
+
+
+def test_threading_writes_bytesio():
+    f = make_bytesio_booklet()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = []
+        for key, value in data_dict2.items():
+            future = executor.submit(set_item, f, key, value)
+            futures.append(future)
+
+    _ = concurrent.futures.wait(futures)
+
+    value = f[10]
+
+    f.close()
+
+    assert value == data_dict2[10]
+
+
+def test_init_bytes_input_bytesio():
+    """
+
+    """
+    bytes_io = io.BytesIO()
+    f = booklet.open(bytes_io, 'n', key_serializer='uint4', value_serializer='pickle')
+
+    for key, value in data_dict2.items():
+        f[key] = value
+
+    bytes_io.seek(0)
+    init_bytes = bytes_io.read(200)
+
+    f.close()
+
+    bytes_io = io.BytesIO()
+
+    f = booklet.open(bytes_io, 'n', init_bytes=init_bytes)
+    for key, value in data_dict2.items():
+        f[key] = value
+
+
+def test_keys_bytesio():
+    f = make_bytesio_booklet(data_dict2)
+    keys = set(list(f.keys()))
+
+    source_keys = set(list(data_dict2.keys()))
+
+    assert source_keys == keys
+
+    for key in keys:
+        _ = f[key]
+
+
+def test_items_bytesio():
+    f = make_bytesio_booklet(data_dict2)
+    for key, value in f.items():
+        source_value = data_dict2[key]
+        assert source_value == value
+
+
+def test_contains_bytesio():
+    f = make_bytesio_booklet(data_dict2)
+    for key in data_dict2:
+        if key not in f:
+            raise KeyError(key)
+
+    assert True
+
+
+def test_len_bytesio():
+    f = make_bytesio_booklet(data_dict2)
+    new_len = len(f)
+
+    assert len(data_dict2) == new_len
+
+
+# @pytest.mark.parametrize('index', [10, 12])
+def test_delete_len_bytesio():
+    f = make_bytesio_booklet(data_dict2)
+
+    data_dict3 = deepcopy(data_dict2)
+
+    indexes = [10, 12]
+    b1 = blake2s(b'0', digest_size=13).digest()
+
+    for index in indexes:
+        _ = data_dict3.pop(index)
+
+        f[index] = b1
+        f[index] = b1
+        del f[index]
+
+        new_len = len(f)
+
+        f.sync()
+
+        try:
+            _ = f[index]
+            raise ValueError()
+        except KeyError:
+            pass
+
+        assert new_len == len(data_dict3)
+
+
+def test_values_bytesio():
+    f = make_bytesio_booklet(data_dict2)
+
+    for key, source_value in data_dict2.items():
+        value = f[key]
+        assert source_value == value
+
+
+# def test_prune_bytesio():
+#     f = make_bytesio_booklet(data_dict2)
+#     del f[10]
+#     del f[12]
+#     f.sync()
+
+#     old_len = len(f)
+#     removed_items = f.prune()
+#     new_len = len(f)
+#     test_value = f[2]
+
+#     assert (removed_items > 0)  and (old_len > removed_items) and (new_len == old_len) and isinstance(test_value, int)
+
+#     # Reindex
+#     old_len = len(f)
+#     old_n_buckets = f._n_buckets
+#     removed_items = f.prune(reindex=True)
+#     new_n_buckets = f._n_buckets
+#     new_len = len(f)
+#     test_value = f[2]
+
+#     assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(test_value, int)
+
+
+# def test_set_items_get_items_bytesio():
+#     b1 = blake2s(b'0', digest_size=13).digest()
+#     with FixedLengthValue(file_path, 'n', key_serializer='uint4', value_len=13) as f:
+#         for key, value in data_dict2.items():
+#             f[key] = value
+
+#     with FixedLengthValue(file_path, 'w') as f:
+#         f[50] = b1
+#         value1 = f[11]
+#         value2 = f[50]
+
+#     assert (value1 == data_dict2[11]) and (value2 == b1)
+
+    # with FixedLengthValue(file_path) as f:
+    #     value = f[50]
+    #     assert value == b1
+
+    #     value = f[11]
+    #     assert value == data_dict2[11]
+
+
+# def test_reindex_bytesio():
+#     """
+
+#     """
+#     b1 = blake2s(b'0', digest_size=13).digest()
+#     with FixedLengthValue(file_path, 'w') as f:
+#         old_n_buckets = f._n_buckets
+#         for i in range(old_n_buckets*11):
+#             f[21+i] = b1
+
+#         f.sync()
+#         value = f[21]
+
+#     assert value == b1
+
+#     with FixedLengthValue(file_path) as f:
+#         new_n_buckets = f._n_buckets
+#         value = f[21]
+
+#     assert (new_n_buckets > 20000) and (value == b1)
+
+
+## Always make this last!!!
+# def test_clear_bytesio():
+#     f = make_bytesio_booklet()
+
+#     f.clear()
+
+#     assert (len(f) == 0) and (len(list(f.keys())) == 0)
+
+
+
+###########################################################
+### Fixed len value
+
+data_dict2 = {key: blake2s(key.to_bytes(4, 'little', signed=True), digest_size=13).digest() for key in range(2, 100)}
 
 
 def test_set_items_fixed():
@@ -497,6 +717,138 @@ def test_clear_fixed():
         assert (len(f) == 0) and (len(list(f.keys())) == 0)
 
 
+###########################################################
+### Fixed len value BytesIO
+
+data_dict3 = {key: blake2s(key.to_bytes(4, 'little', signed=True), digest_size=13).digest() for key in range(2, 100)}
+
+
+def make_bytesio_FixedLengthValue(data=None):
+    bytes_io = io.BytesIO()
+    f = FixedLengthValue(bytes_io, 'n', key_serializer='uint4', value_len=13)
+
+    if data:
+        for key, value in data.items():
+            f[key] = value
+    
+        f.sync()
+
+    return f
+
+
+def test_set_items_fixed_bytesio():
+    f = make_bytesio_FixedLengthValue(data_dict3)
+
+    value = f[10]
+
+    assert value == data_dict3[10]
+
+
+def test_update_fixed_bytesio():
+    f = make_bytesio_FixedLengthValue()
+    f.update(data_dict3)
+
+    value = f[10]
+
+    assert value == data_dict3[10]
+
+
+def test_threading_writes_fixed_bytesio():
+    f = make_bytesio_FixedLengthValue()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = []
+        for key, value in data_dict3.items():
+            future = executor.submit(set_item, f, key, value)
+            futures.append(future)
+
+    _ = concurrent.futures.wait(futures)
+
+    value = f[10]
+
+    assert value == data_dict3[10]
+
+
+def test_init_bytes_input_fixed_bytesio():
+    """
+
+    """
+    bytes_io = io.BytesIO()
+    f = FixedLengthValue(bytes_io, 'n', key_serializer='uint4', value_len=13)
+
+    bytes_io.seek(0)
+    init_bytes = bytes_io.read(200)
+
+    bytes_io = io.BytesIO()
+    f = FixedLengthValue(bytes_io, 'n', init_bytes=init_bytes)
+
+    for key, value in data_dict3.items():
+        f[key] = value
+
+
+def test_keys_fixed_bytesio():
+    f = make_bytesio_FixedLengthValue(data_dict3)
+
+    keys = set(list(f.keys()))
+
+    source_keys = set(list(data_dict3.keys()))
+
+    assert source_keys == keys
+
+    for key in keys:
+        _ = f[key]
+
+
+def test_items_fixed_bytesio():
+    f = make_bytesio_FixedLengthValue(data_dict3)
+
+    for key, value in f.items():
+        source_value = data_dict3[key]
+        assert source_value == value
+
+
+def test_contains_fixed_bytesio():
+    f = make_bytesio_FixedLengthValue(data_dict3)
+
+    for key in data_dict3:
+        if key not in f:
+            raise KeyError(key)
+
+    assert True
+
+
+def test_len_fixed_bytesio():
+    f = make_bytesio_FixedLengthValue(data_dict3)
+
+    new_len = len(f)
+
+    assert len(data_dict3) == new_len
+
+
+# @pytest.mark.parametrize('index', [10, 12])
+def test_delete_len_fixed_bytesio():
+    f = make_bytesio_FixedLengthValue(data_dict3)
+
+    indexes = [10, 12]
+    b1 = blake2s(b'0', digest_size=13).digest()
+
+    for index in indexes:
+        _ = data_dict3.pop(index)
+
+        f[index] = b1
+        f[index] = b1
+        del f[index]
+
+        new_len = len(f)
+
+        f.sync()
+
+        try:
+            _ = f[index]
+            raise ValueError()
+        except KeyError:
+            pass
+
+    assert new_len == len(data_dict3)
 
 
 
