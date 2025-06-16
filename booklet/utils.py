@@ -147,6 +147,8 @@ def close_files(file, n_keys, n_keys_pos, write):
         portalocker.lock(file, portalocker.LOCK_UN)
     except portalocker.exceptions.LockException:
         pass
+    except io.UnsupportedOperation:
+        pass
     file.close()
 
 

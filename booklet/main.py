@@ -387,6 +387,8 @@ class Booklet(MutableMapping):
             portalocker.lock(self._file, portalocker.LOCK_UN)
         except portalocker.exceptions.LockException:
             pass
+        except io.UnsupportedOperation:
+            pass
         self._file.close()
         self._finalizer.detach()
 
