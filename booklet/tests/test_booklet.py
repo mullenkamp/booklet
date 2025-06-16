@@ -360,6 +360,8 @@ def test_init_bytes_input_bytesio():
     for key, value in data_dict2.items():
         f[key] = value
 
+    f.sync()
+
     bytes_io.seek(0)
     init_bytes = bytes_io.read(200)
 
@@ -370,6 +372,20 @@ def test_init_bytes_input_bytesio():
     f = booklet.open(bytes_io, 'n', init_bytes=init_bytes)
     for key, value in data_dict2.items():
         f[key] = value
+
+    f.sync()
+
+    ## Test existing filled BytesIO object
+    bytes_io.seek(0)
+    new_bytes_io = io.BytesIO(bytes_io.read())
+
+    f.close()
+
+    f = booklet.open(new_bytes_io)
+
+    for key, source_value in data_dict2.items():
+        value = f[key]
+        assert source_value == value
 
 
 def test_keys_bytesio():
