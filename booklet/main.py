@@ -382,7 +382,11 @@ class Booklet(MutableMapping):
 
     def close(self):
         self.sync()
-        portalocker.lock(self._file, portalocker.LOCK_UN)
+        # self._finalizer()
+        try:
+            portalocker.lock(self._file, portalocker.LOCK_UN)
+        except portalocker.exceptions.LockException:
+            pass
         self._file.close()
         self._finalizer.detach()
 
@@ -498,7 +502,7 @@ class VariableLengthValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
+    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
         """
 
         """
@@ -559,7 +563,7 @@ class FixedLengthValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, buffer_size: int = 2**22, init_bytes=None):
+    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, buffer_size: int = 2**22, init_bytes=None):
         """
 
         """
@@ -653,7 +657,7 @@ class FixedLengthValue(Booklet):
 
 
 def open(
-    file_path: Union[str, pathlib.Path], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
+    file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
     """
     Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
 
