@@ -143,22 +143,25 @@ class Booklet(MutableMapping):
         if self._buffer_index_set:
             self.sync()
 
-        for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len):
-            yield self._post_key(key)
+        with self._thread_lock:
+            for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len):
+                yield self._post_key(key)
 
     def items(self):
         if self._buffer_index_set:
             self.sync()
 
-        for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len):
-            yield self._post_key(key), self._post_value(value)
+        with self._thread_lock:
+            for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len):
+                yield self._post_key(key), self._post_value(value)
 
     def values(self):
         if self._buffer_index_set:
             self.sync()
 
-        for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len):
-            yield self._post_value(value)
+        with self._thread_lock:
+            for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len):
+                yield self._post_value(value)
 
     def timestamps(self, include_value=False, decode_value=True):
         """
@@ -168,14 +171,15 @@ class Booklet(MutableMapping):
             if self._buffer_index_set:
                 self.sync()
 
-            if include_value:
-                for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len):
-                    if decode_value:
-                        value = self._post_value(value)
-                    yield self._post_key(key), ts_int, value
-            else:
-                for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len):
-                    yield self._post_key(key), ts_int
+            with self._thread_lock:
+                if include_value:
+                    for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len):
+                        if decode_value:
+                            value = self._post_value(value)
+                        yield self._post_key(key), ts_int, value
+                else:
+                    for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len):
+                        yield self._post_key(key), ts_int
         else:
             raise ValueError('timestamps were not initialized with this file.')
 
@@ -201,7 +205,9 @@ class Booklet(MutableMapping):
         if key_hash in self._buffer_index_set:
             return True
 
-        return utils.contains_key(self._file, key_hash, self._n_buckets)
+        with self._thread_lock:
+            check = utils.contains_key(self._file, key_hash, self._n_buckets)
+        return check
 
     def get(self, key, default=None):
         key_bytes = self._pre_key(key)
@@ -210,7 +216,8 @@ class Booklet(MutableMapping):
         if key_hash in self._buffer_index_set:
             self.sync()
 
-        value = utils.get_value(self._file, key_hash, self._n_buckets, self._ts_bytes_len)
+        with self._thread_lock:
+            value = utils.get_value(self._file, key_hash, self._n_buckets, self._ts_bytes_len)
 
         if isinstance(value, bytes):
             return self._post_value(value)
@@ -236,7 +243,8 @@ class Booklet(MutableMapping):
             if key_hash in self._buffer_index_set:
                 self.sync()
 
-            output = utils.get_value_ts(self._file, key_hash, self._n_buckets, include_value, True, self._ts_bytes_len)
+            with self._thread_lock:
+                output = utils.get_value_ts(self._file, key_hash, self._n_buckets, include_value, True, self._ts_bytes_len)
 
             if output:
                 value, ts_int = output
@@ -573,16 +581,19 @@ class FixedLengthValue(Booklet):
 
 
     def keys(self):
-        for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len):
-            yield self._post_key(key)
+        with self._thread_lock:
+            for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len):
+                yield self._post_key(key)
 
     def items(self):
-        for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len):
-            yield self._post_key(key), self._post_value(value)
+        with self._thread_lock:
+            for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len):
+                yield self._post_key(key), self._post_value(value)
 
     def values(self):
-        for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len):
-            yield self._post_value(value)
+        with self._thread_lock:
+            for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len):
+                yield self._post_value(value)
 
     def get(self, key, default=None):
         key_bytes = self._pre_key(key)
@@ -591,7 +602,8 @@ class FixedLengthValue(Booklet):
         if key_hash in self._buffer_index:
             self.sync()
 
-        value = utils.get_value_fixed(self._file, key_hash, self._n_buckets, self._value_len)
+        with self._thread_lock:
+            value = utils.get_value_fixed(self._file, key_hash, self._n_buckets, self._value_len)
 
         if not value:
             return default
