@@ -111,14 +111,14 @@ def make_timestamp_int(timestamp=None):
     elif isinstance(timestamp, int):
         int_us = timestamp
     elif isinstance(timestamp, str):
-        dt = datetime.datetime.fromisoformat(timestamp)
+        dt = datetime.fromisoformat(timestamp)
         if not dt.tzinfo:
             raise ValueError('timestamp needs timezone info.')
-        int_us = int(dt.astimezone(datetime.timezone.utc).timestamp() * 1000000)
-    elif isinstance(timestamp, datetime.datetime):
+        int_us = int(dt.astimezone(timezone.utc).timestamp() * 1000000)
+    elif isinstance(timestamp, datetime):
         if not timestamp.tzinfo:
             raise ValueError('timestamp needs timezone info.')
-        int_us = int(timestamp.astimezone(datetime.timezone.utc).timestamp() * 1000000)
+        int_us = int(timestamp.astimezone(timezone.utc).timestamp() * 1000000)
     else:
         raise TypeError('The timestamp must be either None, an int of the number of microseconds in unix time, an ISO 8601 datetime string with timezone, or a datetime object with timezone.')
 
@@ -1000,7 +1000,7 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets,
 
     init_write_bytes = uuid_variable_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes +  saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes + uuid7_bytes
 
-    extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
+    extra_bytes = b'\x00' * (sub_index_init_pos - len(init_write_bytes))
 
     init_write_bytes += extra_bytes
 
@@ -1015,12 +1015,23 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
 
     """
     if isinstance(file_path, io.BytesIO):
-        fp_exists = False
-        write = True
+        if file_path.seek(0, 2) > 0:
+            fp_exists = True
+            file_path.seek(0)
+        else:
+            fp_exists = False
+
+        if flag == 'r':
+            write = False
+        else:
+            write = True
+
         self._file = file_path
+        is_file = False
     else:
         fp = pathlib.Path(file_path)
         self._file_path = fp
+        is_file = True
 
         if flag == "r":  # Open existing database for reading only (default)
             write = False
@@ -1046,19 +1057,22 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     self._buffer_index_set = set()
 
     self._thread_lock = Lock()
+    self._is_file = is_file
 
     if fp_exists:
         if write:
-            self._file = io.open(fp, 'r+b', buffering=0)
+            if is_file:
+                self._file = io.open(fp, 'r+b', buffering=0)
 
-            ## Locks
-            portalocker.lock(self._file, portalocker.LOCK_EX)
+                ## Locks
+                portalocker.lock(self._file, portalocker.LOCK_EX)
 
         else:
-            self._file = io.open(fp, 'rb', buffering=0)
+            if is_file:
+                self._file = io.open(fp, 'rb', buffering=0)
 
-            ## Lock
-            portalocker.lock(self._file, portalocker.LOCK_SH)
+                ## Lock
+                portalocker.lock(self._file, portalocker.LOCK_SH)
 
         ## Read in initial bytes
         base_param_bytes = self._file.read(sub_index_init_pos)
@@ -1066,7 +1080,8 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         ## system and version check
         sys_uuid = base_param_bytes[:16]
         if sys_uuid != uuid_fixed_blt:
-            portalocker.lock(self._file, portalocker.LOCK_UN)
+            if is_file:
+                portalocker.lock(self._file, portalocker.LOCK_UN)
             raise TypeError('This is not the correct file type.')
 
         version = bytes_to_int(base_param_bytes[16:18])
@@ -1220,7 +1235,7 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_time
 
     init_write_bytes = uuid_fixed_blt + current_version_bytes + n_bytes_file_bytes + n_bytes_key_bytes + n_bytes_value_bytes + n_buckets_bytes + n_bytes_index_bytes + saved_value_serializer_bytes + saved_key_serializer_bytes + n_keys_bytes + value_len_bytes + init_timestamps_bytes + file_ts_bytes + uuid7_bytes
 
-    extra_bytes = b'0' * (sub_index_init_pos - len(init_write_bytes))
+    extra_bytes = b'\x00' * (sub_index_init_pos - len(init_write_bytes))
     init_write_bytes += extra_bytes
 
     return init_write_bytes
@@ -1301,8 +1316,8 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
 
     bd_space = write_buffer_size - bd_pos
     if write_len > bd_space:
-        file_len = flush_data_buffer(file, buffer_data)
-        n_keys += update_index(file, buffer_index, n_buckets)
+        file_len = flush_data_buffer(file, buffer_data, file_len)
+        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
         bd_pos = 0
 
     ## Append to buffers

@@ -98,7 +98,7 @@ class Booklet(MutableMapping):
 
         if output:
             value, ts_int = output
-            if value and ts_int:
+            if ts_int is not None:
                 return orjson.loads(value), ts_int
             else:
                 return orjson.loads(value)
@@ -421,6 +421,10 @@ class Booklet(MutableMapping):
         else:
             raise ValueError("flag must be either 'r' or 'w'.")
 
+        self._buffer_data = bytearray()
+        self._buffer_index = bytearray()
+        self._buffer_index_set = set()
+
         self._finalizer = weakref.finalize(self, utils.close_files, self._file, utils.n_keys_crash, self._n_keys_pos, self.writable)
 
 
@@ -581,16 +585,25 @@ class FixedLengthValue(Booklet):
 
 
     def keys(self):
+        if self._buffer_index_set:
+            self.sync()
+
         with self._thread_lock:
             for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len):
                 yield self._post_key(key)
 
     def items(self):
+        if self._buffer_index_set:
+            self.sync()
+
         with self._thread_lock:
             for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len):
                 yield self._post_key(key), self._post_value(value)
 
     def values(self):
+        if self._buffer_index_set:
+            self.sync()
+
         with self._thread_lock:
             for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len):
                 yield self._post_value(value)
@@ -599,16 +612,16 @@ class FixedLengthValue(Booklet):
         key_bytes = self._pre_key(key)
         key_hash = utils.hash_key(key_bytes)
 
-        if key_hash in self._buffer_index:
+        if key_hash in self._buffer_index_set:
             self.sync()
 
         with self._thread_lock:
             value = utils.get_value_fixed(self._file, key_hash, self._n_buckets, self._value_len)
 
-        if not value:
-            return default
-        else:
+        if isinstance(value, bytes):
             return self._post_value(value)
+        else:
+            return default
 
     # def __len__(self):
     #     return self._n_keys
@@ -631,10 +644,14 @@ class FixedLengthValue(Booklet):
         """
         Prunes the old keys and associated values. Returns the recovered space in bytes.
         """
+        self.sync()
+
         if self.writable:
             with self._thread_lock:
                 n_keys, removed_count, n_buckets = utils.prune_file_fixed(self._file, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index, self._buffer_index_set)
                 self._n_keys = n_keys
+                self._file.seek(self._n_keys_pos)
+                self._file.write(utils.int_to_bytes(self._n_keys, 4))
 
                 if n_buckets != self._n_buckets:
                     self._n_buckets = n_buckets
@@ -650,10 +667,10 @@ class FixedLengthValue(Booklet):
     def __getitem__(self, key):
         value = self.get(key)
 
-        if not value:
+        if value is None:
             raise KeyError(key)
         else:
-            return self._post_value(value)
+            return value
 
 
     def __setitem__(self, key, value):

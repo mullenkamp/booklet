@@ -14,42 +14,42 @@ imports = set()
 try:
     import orjson
     imports.add('orjson')
-except:
+except ImportError:
     pass
 try:
     import zstandard as zstd
     imports.add('zstd')
-except:
+except ImportError:
     pass
 try:
     import numpy as np
     imports.add('numpy')
-except:
+except ImportError:
     pass
 try:
     import pandas as pd
     imports.add('pandas')
-except:
+except ImportError:
     pass
 try:
     import geopandas as gpd
     imports.add('geopandas')
-except:
+except ImportError:
     pass
 try:
     import pyarrow
     imports.add('pyarrow')
-except:
+except ImportError:
     pass
 try:
     import shapely
     imports.add('shapely')
-except:
+except ImportError:
     pass
 try:
     import msgpack
     imports.add('msgpack')
-except:
+except ImportError:
     pass
 
 
@@ -155,7 +155,7 @@ class Uint1:
 
 class Int1:
     def dumps(obj):
-        return int(obj).to_bytes(4, 'little', signed=True)
+        return int(obj).to_bytes(1, 'little', signed=True)
     def loads(obj):
         return int.from_bytes(obj, 'little', signed=True)
 
