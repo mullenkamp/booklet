@@ -867,6 +867,224 @@ def test_delete_len_fixed_bytesio():
     assert new_len == len(data_dict3)
 
 
+###########################################################
+### Regression tests for bug fixes
+
+
+def test_fixed_buffer_overflow():
+    """
+    Test 1: FixedLengthValue with a small buffer_size to trigger the
+    flush path in write_data_blocks_fixed (Fix A).
+    """
+    tf = NamedTemporaryFile()
+    value_len = 1024
+    val = b'\xab' * value_len
+
+    with FixedLengthValue(tf.name, 'n', key_serializer='uint4', value_len=value_len, buffer_size=4096) as f:
+        for i in range(20):
+            f[i] = val
+
+    with FixedLengthValue(tf.name) as f:
+        assert len(f) == 20
+        for i in range(20):
+            assert f[i] == val
+
+
+def test_make_timestamp_string_and_datetime():
+    """
+    Test 2: make_timestamp_int with string and datetime inputs (Fix B).
+    These branches previously crashed due to wrong datetime references.
+    """
+    from datetime import datetime, timezone
+
+    # String timestamp
+    ts_str = utils.make_timestamp_int('2024-01-01T00:00:00+00:00')
+    assert isinstance(ts_str, int)
+    assert ts_str == 1704067200000000
+
+    # datetime object
+    dt = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ts_dt = utils.make_timestamp_int(dt)
+    assert isinstance(ts_dt, int)
+    assert ts_dt == int(dt.timestamp() * 1000000)
+
+    # None (existing behavior, sanity check)
+    ts_none = utils.make_timestamp_int()
+    assert isinstance(ts_none, int)
+    assert ts_none > 0
+
+    # int passthrough
+    ts_int = utils.make_timestamp_int(42)
+    assert ts_int == 42
+
+
+def test_fixed_falsy_values():
+    """
+    Test 3: FixedLengthValue storing and retrieving falsy byte values (Fix E/F).
+    b'\\x00' is falsy in Python; get() and __getitem__() must still return it.
+    """
+    tf = NamedTemporaryFile()
+    value_len = 4
+
+    with FixedLengthValue(tf.name, 'n', key_serializer='uint4', value_len=value_len) as f:
+        f[1] = b'\x00' * value_len
+        f[2] = b'\x00\x01\x00\x00'
+        f[3] = b'\xff' * value_len
+
+    with FixedLengthValue(tf.name) as f:
+        # __getitem__ should not raise KeyError for zero-bytes value
+        assert f[1] == b'\x00' * value_len
+        assert f[2] == b'\x00\x01\x00\x00'
+        assert f[3] == b'\xff' * value_len
+
+        # get() should return the value, not the default
+        assert f.get(1) == b'\x00' * value_len
+        assert f.get(999) is None
+        assert f.get(999, 'missing') == 'missing'
+
+
+def test_fixed_iteration_sees_buffered_writes():
+    """
+    Test 4: FixedLengthValue iteration methods should see buffered (unsynced)
+    writes without requiring an explicit sync() call (Fix G).
+    """
+    tf = NamedTemporaryFile()
+    value_len = 13
+    expected = {}
+
+    with FixedLengthValue(tf.name, 'n', key_serializer='uint4', value_len=value_len) as f:
+        for i in range(5):
+            val = blake2s(i.to_bytes(4, 'little'), digest_size=value_len).digest()
+            f[i] = val
+            expected[i] = val
+
+        # Do NOT call f.sync() — iteration should trigger it internally
+
+        keys = set(f.keys())
+        assert keys == set(expected.keys())
+
+        items = dict(f.items())
+        assert items == expected
+
+        values = list(f.values())
+        assert len(values) == len(expected)
+        for v in values:
+            assert v in expected.values()
+
+
+def test_fixed_prune_persists_n_keys():
+    """
+    Test 5: FixedLengthValue prune should persist n_keys to disk so that
+    reopening the file shows the correct count (Fix H).
+    """
+    tf = NamedTemporaryFile()
+    value_len = 13
+    b1 = blake2s(b'0', digest_size=value_len).digest()
+
+    # Create file with some entries, then delete a few
+    with FixedLengthValue(tf.name, 'n', key_serializer='uint4', value_len=value_len) as f:
+        for i in range(10):
+            f[i] = b1
+
+    with FixedLengthValue(tf.name, 'w') as f:
+        del f[0]
+        del f[1]
+        del f[2]
+        assert len(f) == 7
+        removed = f.prune()
+        assert removed == 3
+        assert len(f) == 7
+
+    # Reopen and verify n_keys was persisted correctly
+    with FixedLengthValue(tf.name) as f:
+        assert len(f) == 7
+        # Verify the pruned keys are actually gone
+        for i in range(3, 10):
+            assert f[i] == b1
+
+
+def test_metadata_with_timestamp():
+    """
+    Test 6: get_metadata with include_timestamp=True (Fix I).
+    """
+    tf = NamedTemporaryFile()
+
+    with booklet.open(tf.name, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=True) as f:
+        f[1] = 'test'
+        f.set_metadata({'key': 'value'})
+
+    with booklet.open(tf.name) as f:
+        # Without timestamp
+        meta = f.get_metadata()
+        assert meta == {'key': 'value'}
+
+        # With timestamp
+        result = f.get_metadata(include_timestamp=True)
+        assert isinstance(result, tuple)
+        meta, ts = result
+        assert meta == {'key': 'value'}
+        assert isinstance(ts, int)
+        assert ts > 0
+
+
+def test_reopen():
+    """
+    Test 7: The reopen() method should work for both 'r' and 'w' flags
+    and should not carry stale buffer state (Fix J).
+    """
+    tf = NamedTemporaryFile()
+
+    # Create and populate file
+    with booklet.open(tf.name, 'n', key_serializer='uint4', value_serializer='pickle') as f:
+        for i in range(5):
+            f[i] = i * 10
+
+    # Open for reading, then reopen for writing
+    f = booklet.open(tf.name, 'r')
+    assert f[0] == 0
+    assert f[3] == 30
+
+    f.reopen('w')
+    f[10] = 100
+    f.sync()
+    assert f[10] == 100
+    # Old data still accessible
+    assert f[0] == 0
+
+    # Reopen back to read
+    f.reopen('r')
+    assert f[10] == 100
+    assert f[0] == 0
+    assert len(f) == 6
+    f.close()
+
+
+def test_fixed_bytesio_reopen_existing():
+    """
+    Test 8: FixedLengthValue with BytesIO should detect existing content
+    when reopening a BytesIO object that already has data (Fix C).
+    """
+    value_len = 13
+    b1 = blake2s(b'test', digest_size=value_len).digest()
+
+    # Create a FixedLengthValue in a BytesIO
+    bytes_io = io.BytesIO()
+    f = FixedLengthValue(bytes_io, 'n', key_serializer='uint4', value_len=value_len)
+    for i in range(5):
+        f[i] = b1
+    f.sync()
+
+    # Copy the BytesIO content to a new BytesIO to simulate reopening
+    bytes_io.seek(0)
+    new_bytes_io = io.BytesIO(bytes_io.read())
+    f.close()
+
+    # Open the new BytesIO for reading — should detect existing content
+    f2 = FixedLengthValue(new_bytes_io, 'r')
+    assert len(f2) == 5
+    for i in range(5):
+        assert f2[i] == b1
+    f2.close()
 
 
 
