@@ -259,9 +259,20 @@ def reindex(file, n_buckets, new_n_buckets, index_offset, first_data_block_pos, 
 
 def make_timestamp_int(timestamp=None):
     """
-    The timestamp must be either None, an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone. None will create a timestamp of now.
+    Convert various timestamp formats to an integer of microseconds in POSIX UTC.
 
-    It will return an int of the number of microseconds in POSIX UTC time.
+    Parameters
+    ----------
+    timestamp : int, str, datetime, or None, optional
+        The timestamp to convert. It must be either None (current time), 
+        an int of the number of microseconds in POSIX UTC time, 
+        an ISO 8601 datetime string with timezone, or a datetime 
+        object with timezone.
+
+    Returns
+    -------
+    int
+        The number of microseconds in POSIX UTC time.
     """
     if timestamp is None:
         int_us = time.time_ns() // 1000

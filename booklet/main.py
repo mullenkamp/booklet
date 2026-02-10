@@ -76,7 +76,15 @@ class Booklet(MutableMapping):
 
     def set_metadata(self, data, timestamp=None):
         """
-        Sets the metadata for the booklet. The data input must be a json serializable object. Optionally assign a timestamp.
+        Set the metadata for the booklet.
+
+        Parameters
+        ----------
+        data : any
+            A JSON serializable object to be stored as metadata.
+        timestamp : int, str, datetime, or None, optional
+            A specific timestamp to associate with the metadata. 
+            If None (default), the current time is used.
         """
         if self.writable:
             self.sync()
@@ -91,8 +99,19 @@ class Booklet(MutableMapping):
 
     def get_metadata(self, include_timestamp=False):
         """
-        Get the metadata. Optionally include the timestamp in the output.
-        Will return None if no metadata has been assigned.
+        Retrieve the metadata for the booklet.
+
+        Parameters
+        ----------
+        include_timestamp : bool, optional
+            Whether to include the timestamp in the returned output. 
+            Defaults to False.
+
+        Returns
+        -------
+        any or tuple or None
+            The metadata object. If include_timestamp is True, returns (metadata, timestamp). 
+            Returns None if no metadata is set.
         """
         output = utils.get_value_ts(self._file, utils.metadata_key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len, self._index_offset)
 
@@ -140,6 +159,9 @@ class Booklet(MutableMapping):
         return value
 
     def keys(self):
+        """
+        Return an iterator over the booklet's keys.
+        """
         if self._buffer_index_set:
             self.sync()
 
@@ -148,6 +170,9 @@ class Booklet(MutableMapping):
                 yield self._post_key(key)
 
     def items(self):
+        """
+        Return an iterator over the booklet's (key, value) pairs.
+        """
         if self._buffer_index_set:
             self.sync()
 
@@ -156,6 +181,9 @@ class Booklet(MutableMapping):
                 yield self._post_key(key), self._post_value(value)
 
     def values(self):
+        """
+        Return an iterator over the booklet's values.
+        """
         if self._buffer_index_set:
             self.sync()
 
@@ -165,7 +193,21 @@ class Booklet(MutableMapping):
 
     def timestamps(self, include_value=False, decode_value=True):
         """
-        Return an iterator for timestamps for all keys. Optionally add values to the iterator.
+        Return an iterator for timestamps for all keys.
+
+        Parameters
+        ----------
+        include_value : bool, optional
+            Whether to include the value in the iterator. Defaults to False.
+        decode_value : bool, optional
+            Whether to decode the value using the value_serializer. 
+            Only relevant if include_value is True. Defaults to True.
+
+        Yields
+        ------
+        tuple
+            If include_value is False: (key, timestamp)
+            If include_value is True: (key, timestamp, value)
         """
         if self._init_timestamps:
             if self._buffer_index_set:
@@ -187,18 +229,15 @@ class Booklet(MutableMapping):
         return self.keys()
 
     def __len__(self):
-        # counter = count()
-        # deque(zip(self.keys(), counter), maxlen=0)
-
-        # return next(counter)
-
-        # len1 = (len(self._index_mmap) - self._index_n_bytes_skip - (self._n_buckets*utils.n_bytes_index))/(utils.n_bytes_file + utils.key_hash_len)
-
-        # return int(len1 - self._n_deletes)
-
+        """
+        Return the number of keys in the booklet.
+        """
         return self._n_keys
 
     def __contains__(self, key):
+        """
+        Check if key is in the booklet.
+        """
         bytes_key = self._pre_key(key)
         key_hash = utils.hash_key(bytes_key)
 
@@ -210,6 +249,21 @@ class Booklet(MutableMapping):
         return check
 
     def get(self, key, default=None):
+        """
+        Return the value for key if key is in the booklet, else default.
+
+        Parameters
+        ----------
+        key : any
+            The key to look up.
+        default : any, optional
+            The value to return if the key is not found. Defaults to None.
+
+        Returns
+        -------
+        any
+            The value associated with the key, or the default value.
+        """
         key_bytes = self._pre_key(key)
         key_hash = utils.hash_key(key_bytes)
 
@@ -226,7 +280,19 @@ class Booklet(MutableMapping):
 
     def get_items(self, keys, default=None):
         """
-        Return an iterator of the values associated with the input keys. Missing keys will return the default.
+        Return an iterator of (key, value) pairs for the given keys.
+
+        Parameters
+        ----------
+        keys : iterable
+            The keys to retrieve.
+        default : any, optional
+            The value to return for any missing keys. Defaults to None.
+
+        Yields
+        ------
+        tuple
+            (key, value) pairs.
         """
         for key in keys:
             value = self.get(key, default=default)
@@ -234,7 +300,25 @@ class Booklet(MutableMapping):
 
     def get_timestamp(self, key, include_value=False, decode_value=True, default=None):
         """
-        Get a timestamp associated with a key. Optionally include the value.
+        Get the timestamp associated with a key.
+
+        Parameters
+        ----------
+        key : any
+            The key to look up.
+        include_value : bool, optional
+            Whether to also return the value. Defaults to False.
+        decode_value : bool, optional
+            Whether to decode the value. Defaults to True.
+        default : any, optional
+            The value to return if the key is not found. Defaults to None.
+
+        Returns
+        -------
+        int or tuple or any
+            The timestamp (int) if include_value is False.
+            A tuple (timestamp, value) if include_value is True.
+            The default value if the key is not found.
         """
         if self._init_timestamps:
             key_bytes = self._pre_key(key)
@@ -263,7 +347,16 @@ class Booklet(MutableMapping):
 
     def set_timestamp(self, key, timestamp):
         """
-        Set a timestamp for a specific key. The timestamp must be either an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone.
+        Set a timestamp for a specific key.
+
+        Parameters
+        ----------
+        key : any
+            The key to update.
+        timestamp : int, str, or datetime
+            The timestamp to assign. It must be either an int of the number of 
+            microseconds in POSIX UTC time, an ISO 8601 datetime string with 
+            timezone, or a datetime object with timezone.
         """
         if self._init_timestamps:
             if self.writable:
@@ -283,8 +376,20 @@ class Booklet(MutableMapping):
 
     def set(self, key, value, timestamp=None, encode_value=True):
         """
-        Set a key/value pair. Optionally assign a specific timestamp.
-        The timestamp must be either None, an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone. None will create a timestamp of now.
+        Set a key/value pair.
+
+        Parameters
+        ----------
+        key : any
+            The key to set.
+        value : any
+            The value to set.
+        timestamp : int, str, datetime, or None, optional
+            A specific timestamp to associate with the key/value pair. 
+            If None (default), the current time is used.
+        encode_value : bool, optional
+            Whether to encode the value using the value_serializer. 
+            Defaults to True. If False, value must be bytes.
         """
         if self.writable:
             if encode_value:
@@ -301,7 +406,12 @@ class Booklet(MutableMapping):
 
     def update(self, key_value: MutableMapping):
         """
+        Update the booklet with key/value pairs from another mapping.
 
+        Parameters
+        ----------
+        key_value : MutableMapping
+            A mapping of key/value pairs to add to the booklet.
         """
         if self.writable:
             with self._thread_lock:
@@ -317,7 +427,21 @@ class Booklet(MutableMapping):
 
     def prune(self, timestamp=None):
         """
-        Prunes the old keys and associated values. Returns the number of removed items. The method can also prune remove keys/values older than the timestamp.
+        Prune old keys and values from the booklet.
+
+        This method removes overwritten or deleted entries, potentially reclaiming 
+        disk space and improving performance. It can also remove entries older 
+        than a specified timestamp.
+
+        Parameters
+        ----------
+        timestamp : int, str, datetime, or None, optional
+            If provided, entries older than this timestamp will be removed.
+
+        Returns
+        -------
+        int
+            The number of removed items.
         """
         self.sync()
 
@@ -341,6 +465,9 @@ class Booklet(MutableMapping):
 
 
     def __getitem__(self, key):
+        """
+        Return the value for key. Raises KeyError if not found.
+        """
         value = self.get(key)
 
         if value is None:
@@ -350,12 +477,17 @@ class Booklet(MutableMapping):
 
 
     def __setitem__(self, key, value):
+        """
+        Set key to value.
+        """
         self.set(key, value)
 
 
     def __delitem__(self, key):
         """
-        Delete flags are written immediately as are the number of total deletes. This ensures that there are no sync issues. Deletes are generally rare, so this shouldn't impact most use cases.
+        Remove key from the booklet. Raises KeyError if not found.
+
+        Delete flags are written immediately to ensure data integrity.
         """
         if self.writable:
             if self._buffer_index_set:
@@ -382,6 +514,9 @@ class Booklet(MutableMapping):
         self.close()
 
     def clear(self):
+        """
+        Remove all keys and values from the booklet.
+        """
         if self.writable:
             with self._thread_lock:
                 utils.clear(self._file, self._n_buckets, self._n_keys_pos, self._write_buffer_size)
@@ -394,6 +529,9 @@ class Booklet(MutableMapping):
             raise ValueError('File is open for read only.')
 
     def close(self):
+        """
+        Sync and close the booklet file.
+        """
         self.sync()
         # self._finalizer()
         try:
@@ -412,7 +550,13 @@ class Booklet(MutableMapping):
 
     def reopen(self, flag):
         """
-        Reopens the file on a previously initialized Booklet. The flag must be either 'r' or 'w'. This is faster than the normal opening and closing process.
+        Reopen the booklet file.
+
+        Parameters
+        ----------
+        flag : str
+            The mode to open the file in. Must be either 'r' (read-only) 
+            or 'w' (read-write).
         """
         self.close()
         if flag == 'w':
@@ -435,7 +579,7 @@ class Booklet(MutableMapping):
 
     def sync(self):
         """
-        Sync the data buffers to disk. This also occurs when the file is closed. This must occur to ensure the data is persisted to disk.
+        Sync the data buffers to disk, ensuring all changes are persisted.
         """
         if self.writable:
             with self._thread_lock:
@@ -531,7 +675,26 @@ class VariableLengthValue(Booklet):
     """
     def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
         """
+        Initialize a VariableLengthValue booklet.
 
+        Parameters
+        ----------
+        file_path : str, pathlib.Path, or io.BytesIO
+            Path to the booklet file or a BytesIO object.
+        flag : str, optional
+            Mode to open the file ('r', 'w', 'c', 'n'). Defaults to 'r'.
+        key_serializer : str, class, or None, optional
+            Serializer for keys. Defaults to None (bytes).
+        value_serializer : str, class, or None, optional
+            Serializer for values. Defaults to None (bytes).
+        n_buckets : int, optional
+            Initial number of hash buckets. Defaults to 12007.
+        buffer_size : int, optional
+            Write buffer size in bytes. Defaults to 4MB (2**22).
+        init_timestamps : bool, optional
+            Whether to enable timestamp support. Defaults to True.
+        init_bytes : bytes, optional
+            Initial bytes to write to a new file. Defaults to None.
         """
         utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)
 
@@ -592,12 +755,32 @@ class FixedLengthValue(Booklet):
     """
     def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, buffer_size: int = 2**22, init_bytes=None):
         """
+        Initialize a FixedLengthValue booklet.
 
+        Parameters
+        ----------
+        file_path : str, pathlib.Path, or io.BytesIO
+            Path to the booklet file or a BytesIO object.
+        flag : str, optional
+            Mode to open the file ('r', 'w', 'c', 'n'). Defaults to 'r'.
+        key_serializer : str, class, or None, optional
+            Serializer for keys. Defaults to None (bytes).
+        value_len : int, optional
+            Fixed length of values in bytes. Required for new files.
+        n_buckets : int, optional
+            Initial number of hash buckets. Defaults to 12007.
+        buffer_size : int, optional
+            Write buffer size in bytes. Defaults to 4MB (2**22).
+        init_bytes : bytes, optional
+            Initial bytes to write to a new file. Defaults to None.
         """
         utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, init_bytes)
 
 
     def keys(self):
+        """
+        Return an iterator over the booklet's keys.
+        """
         if self._buffer_index_set:
             self.sync()
 
@@ -606,6 +789,9 @@ class FixedLengthValue(Booklet):
                 yield self._post_key(key)
 
     def items(self):
+        """
+        Return an iterator over the booklet's (key, value) pairs.
+        """
         if self._buffer_index_set:
             self.sync()
 
@@ -614,6 +800,9 @@ class FixedLengthValue(Booklet):
                 yield self._post_key(key), self._post_value(value)
 
     def values(self):
+        """
+        Return an iterator over the booklet's values.
+        """
         if self._buffer_index_set:
             self.sync()
 
@@ -622,6 +811,21 @@ class FixedLengthValue(Booklet):
                 yield self._post_value(value)
 
     def get(self, key, default=None):
+        """
+        Return the value for key if key is in the booklet, else default.
+
+        Parameters
+        ----------
+        key : any
+            The key to look up.
+        default : any, optional
+            The value to return if the key is not found. Defaults to None.
+
+        Returns
+        -------
+        any
+            The value associated with the key, or the default value.
+        """
         key_bytes = self._pre_key(key)
         key_hash = utils.hash_key(key_bytes)
 
@@ -641,7 +845,12 @@ class FixedLengthValue(Booklet):
 
     def update(self, key_value_dict):
         """
+        Update the booklet with key/value pairs from another mapping.
 
+        Parameters
+        ----------
+        key_value_dict : MutableMapping
+            A mapping of key/value pairs to add to the booklet.
         """
         if self.writable:
             with self._thread_lock:
@@ -655,7 +864,15 @@ class FixedLengthValue(Booklet):
 
     def prune(self):
         """
-        Prunes the old keys and associated values. Returns the recovered space in bytes.
+        Prune old keys and values from the booklet.
+
+        This method removes overwritten or deleted entries, potentially reclaiming 
+        disk space and improving performance.
+
+        Returns
+        -------
+        int
+            The number of removed items.
         """
         self.sync()
 
@@ -678,6 +895,9 @@ class FixedLengthValue(Booklet):
 
 
     def __getitem__(self, key):
+        """
+        Return the value for key. Raises KeyError if not found.
+        """
         value = self.get(key)
 
         if value is None:
@@ -687,6 +907,9 @@ class FixedLengthValue(Booklet):
 
 
     def __setitem__(self, key, value):
+        """
+        Set key to value.
+        """
         if self.writable:
             with self._thread_lock:
                 n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, self._index_offset)
@@ -703,54 +926,44 @@ class FixedLengthValue(Booklet):
 def open(
     file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
     """
-    Open a persistent dictionary for reading and writing. On creation of the file, the serializers will be written to the file. Any subsequent reads and writes do not need to be opened with any parameters other than file_path and flag.
+    Open a persistent dictionary for reading and writing.
+
+    On creation of the file, the serializers will be written to the file. 
+    Any subsequent reads and writes do not need to be opened with any 
+    parameters other than file_path and flag.
 
     Parameters
-    -----------
-    file_path : str or pathlib.Path
-        It must be a path to a local file location. If you want to use a tempfile, then use the name from the NamedTemporaryFile initialized class.
-
-    flag : str
-        Flag associated with how the file is opened according to the dbm style. See below for details.
-
-    key_serializer : str, class, or None
-        The serializer to use to convert the input value to bytes. Run the booklet.available_serializers to determine the internal serializers that are available. None will require bytes as input. A custom serializer class can also be used. If the objects can be serialized to json, then use orjson or msgpack. They are super fast and you won't have the pickle issues.
-        If a custom class is passed, then it must have dumps and loads methods.
-
-    value_serializer : str, class, or None
+    ----------
+    file_path : str, pathlib.Path, or io.BytesIO
+        Path to the booklet file or a BytesIO object.
+    flag : str, optional
+        Flag associated with how the file is opened:
+        'r': Open existing database for reading only (default).
+        'w': Open existing database for reading and writing.
+        'c': Open database for reading and writing, creating it if it 
+             doesn't exist.
+        'n': Always create a new, empty database, open for reading 
+             and writing.
+    key_serializer : str, class, or None, optional
+        The serializer to use to convert the input key to bytes. 
+        None (default) will require bytes as input. 
+        Supported built-in serializers: 'str', 'pickle', 'json', 'orjson', 
+        'uint1', 'int1', etc.
+    value_serializer : str, class, or None, optional
         Similar to the key_serializer, except for the values.
-
-    n_buckets : int
-        The number of hash buckets to using in the indexing. Generally use the same number of buckets as you expect for the total number of keys.
-
-    buffer_size : int
-        The buffer memory size in bytes used for writing. Writes are first written to a block of memory, then once the buffer if filled up it writes to disk. This is to reduce the number of writes to disk and consequently the CPU write overhead.
-        This is only used when the file is open for writing.
-
-    init_timestamps : bool
-        Should timestamps be initialized in the object? This cannot be changed later.
+    n_buckets : int, optional
+        The number of hash buckets to use in the indexing. 
+        Defaults to 12007.
+    buffer_size : int, optional
+        The write buffer size in bytes. Defaults to 4MB (2**22).
+    init_timestamps : bool, optional
+        Whether to enable timestamp support for keys. Defaults to True.
+    init_bytes : bytes, optional
+        Initial bytes to write to a new file. Defaults to None.
 
     Returns
     -------
     Booklet
-
-    The optional *flag* argument can be:
-
-    +---------+-------------------------------------------+
-    | Value   | Meaning                                   |
-    +=========+===========================================+
-    | ``'r'`` | Open existing database for reading only   |
-    |         | (default)                                 |
-    +---------+-------------------------------------------+
-    | ``'w'`` | Open existing database for reading and    |
-    |         | writing                                   |
-    +---------+-------------------------------------------+
-    | ``'c'`` | Open database for reading and writing,    |
-    |         | creating it if it doesn't exist           |
-    +---------+-------------------------------------------+
-    | ``'n'`` | Always create a new, empty database, open |
-    |         | for reading and writing                   |
-    +---------+-------------------------------------------+
-
+        A Booklet object (specifically a VariableLengthValue instance).
     """
     return VariableLengthValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)
