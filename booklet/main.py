@@ -81,10 +81,10 @@ class Booklet(MutableMapping):
         if self.writable:
             self.sync()
             with self._thread_lock:
-                _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len)
+                _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len, self._index_offset)
                 if self._buffer_index:
                     utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
-                _ = utils.update_index(self._file, self._buffer_index, self._buffer_index_set, self._n_buckets)
+                _ = utils.update_index(self._file, self._buffer_index, self._buffer_index_set, self._n_buckets, self._index_offset)
                 self._file.flush()
         else:
             raise ValueError('File is open for read only.')
@@ -94,7 +94,7 @@ class Booklet(MutableMapping):
         Get the metadata. Optionally include the timestamp in the output.
         Will return None if no metadata has been assigned.
         """
-        output = utils.get_value_ts(self._file, utils.metadata_key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len)
+        output = utils.get_value_ts(self._file, utils.metadata_key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len, self._index_offset)
 
         if output:
             value, ts_int = output
@@ -144,7 +144,7 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
-            for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len):
+            for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_key(key)
 
     def items(self):
@@ -152,7 +152,7 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
-            for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len):
+            for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_key(key), self._post_value(value)
 
     def values(self):
@@ -160,7 +160,7 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
-            for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len):
+            for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_value(value)
 
     def timestamps(self, include_value=False, decode_value=True):
@@ -173,12 +173,12 @@ class Booklet(MutableMapping):
 
             with self._thread_lock:
                 if include_value:
-                    for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len):
+                    for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
                         if decode_value:
                             value = self._post_value(value)
                         yield self._post_key(key), ts_int, value
                 else:
-                    for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len):
+                    for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
                         yield self._post_key(key), ts_int
         else:
             raise ValueError('timestamps were not initialized with this file.')
@@ -206,7 +206,7 @@ class Booklet(MutableMapping):
             return True
 
         with self._thread_lock:
-            check = utils.contains_key(self._file, key_hash, self._n_buckets)
+            check = utils.contains_key(self._file, key_hash, self._n_buckets, self._index_offset)
         return check
 
     def get(self, key, default=None):
@@ -217,7 +217,7 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
-            value = utils.get_value(self._file, key_hash, self._n_buckets, self._ts_bytes_len)
+            value = utils.get_value(self._file, key_hash, self._n_buckets, self._ts_bytes_len, self._index_offset)
 
         if isinstance(value, bytes):
             return self._post_value(value)
@@ -244,7 +244,7 @@ class Booklet(MutableMapping):
                 self.sync()
 
             with self._thread_lock:
-                output = utils.get_value_ts(self._file, key_hash, self._n_buckets, include_value, True, self._ts_bytes_len)
+                output = utils.get_value_ts(self._file, key_hash, self._n_buckets, include_value, True, self._ts_bytes_len, self._index_offset)
 
             if output:
                 value, ts_int = output
@@ -271,7 +271,7 @@ class Booklet(MutableMapping):
                 key_hash = utils.hash_key(key_bytes)
 
                 with self._thread_lock:
-                    success = utils.set_timestamp(self._file, key_hash, self._n_buckets, timestamp)
+                    success = utils.set_timestamp(self._file, key_hash, self._n_buckets, timestamp, self._index_offset)
 
                 if not success:
                     raise KeyError(key)
@@ -292,8 +292,9 @@ class Booklet(MutableMapping):
             elif not isinstance(value, bytes):
                 raise TypeError('If encode_value is False, then value must be a bytes object.')
             with self._thread_lock:
-                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len)
+                n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len, self._index_offset)
                 self._n_keys += n_extra_keys
+                # self._check_auto_reindex()
         else:
             raise ValueError('File is open for read only.')
 
@@ -305,32 +306,34 @@ class Booklet(MutableMapping):
         if self.writable:
             with self._thread_lock:
                 for key, value in key_value.items():
-                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, None, self._ts_bytes_len)
+                    n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, None, self._ts_bytes_len, self._index_offset)
                     self._n_keys += n_extra_keys
+
+                # self._check_auto_reindex()
 
         else:
             raise ValueError('File is open for read only.')
 
 
-    def prune(self, timestamp=None, reindex=False):
+    def prune(self, timestamp=None):
         """
-        Prunes the old keys and associated values. Returns the number of removed items. The method can also prune remove keys/values older than the timestamp. The user can also reindex the booklet file. False does no reindexing, True increases the n_buckets to a preassigned value, or an int of the n_buckets. True can only be used if the default n_buckets were used at original initialisation.
+        Prunes the old keys and associated values. Returns the number of removed items. The method can also prune remove keys/values older than the timestamp.
         """
         self.sync()
 
         if self.writable:
 
             with self._thread_lock:
-                n_keys, removed_count, n_buckets = utils.prune_file(self._file, timestamp, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set)
+                n_keys, removed_count = utils.prune_file(self._file, timestamp, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
                 self._n_keys = n_keys
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
 
-                if n_buckets != self._n_buckets:
-                    self._n_buckets = n_buckets
-                    self._file.seek(21)
-                    self._file.write(utils.int_to_bytes(n_buckets, 4))
-                    self._file.flush()
+                # Reset layout after prune (index always written at byte 200)
+                self._index_offset = utils.sub_index_init_pos
+                self._first_data_block_pos = utils.sub_index_init_pos + (self._n_buckets * utils.n_bytes_file)
+
+                self._file.flush()
 
             return removed_count
         else:
@@ -362,7 +365,7 @@ class Booklet(MutableMapping):
             key_hash = utils.hash_key(key_bytes)
 
             with self._thread_lock:
-                del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets)
+                del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets, self._index_offset)
                 if del_bool:
                     self._n_keys -= 1
                     self._file.seek(self._n_keys_pos)
@@ -383,6 +386,8 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 utils.clear(self._file, self._n_buckets, self._n_keys_pos, self._write_buffer_size)
                 self._n_keys = 0
+                self._index_offset = utils.sub_index_init_pos
+                self._first_data_block_pos = utils.sub_index_init_pos + (self._n_buckets * utils.n_bytes_file)
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
         else:
@@ -439,25 +444,33 @@ class Booklet(MutableMapping):
                     self._sync_index()
                     self._file.seek(self._n_keys_pos)
                     self._file.write(utils.int_to_bytes(self._n_keys, 4))
+
+                # Check for auto-reindex even when buffer is empty
+                # (keys may have been flushed during write_data_blocks)
+                self._check_auto_reindex()
                 self._file.flush()
 
     def _sync_index(self):
-        n_extra_keys = utils.update_index(self._file, self._buffer_index, self._buffer_index_set, self._n_buckets)
+        n_extra_keys = utils.update_index(self._file, self._buffer_index, self._buffer_index_set, self._n_buckets, self._index_offset)
         self._n_keys += n_extra_keys
-        # self._index_mmap.flush()
 
-        # n_keys = len(self)
-        # if n_keys > self._n_buckets*10:
-        #     self._reindex()
+        self._check_auto_reindex()
 
-    # def _reindex(self):
-    #     """
-
-    #     """
-    #     self._n_buckets = utils.reindex(self._index_mmap, self._n_bytes_index, self._n_bytes_file, self._n_buckets, len(self))
-    #     self._n_deletes = 0
-    #     self._file.seek(21)
-    #     self._file.write(utils.int_to_bytes(self._n_buckets, 4))
+    def _check_auto_reindex(self):
+        # Auto-reindex when load factor > 1.0
+        if self._n_keys > self._n_buckets:
+            new_n_buckets = utils.get_new_n_buckets(self._n_buckets)
+            if new_n_buckets is not None:
+                fixed_value_len = getattr(self, '_value_len', None)
+                new_index_offset, new_first_data_block_pos = utils.reindex(
+                    self._file, self._n_buckets, new_n_buckets,
+                    self._index_offset, self._first_data_block_pos,
+                    self._write_buffer_size, self._ts_bytes_len,
+                    fixed_value_len
+                )
+                self._n_buckets = new_n_buckets
+                self._index_offset = new_index_offset
+                self._first_data_block_pos = new_first_data_block_pos
 
 
 
@@ -589,7 +602,7 @@ class FixedLengthValue(Booklet):
             self.sync()
 
         with self._thread_lock:
-            for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len):
+            for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_key(key)
 
     def items(self):
@@ -597,7 +610,7 @@ class FixedLengthValue(Booklet):
             self.sync()
 
         with self._thread_lock:
-            for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len):
+            for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_key(key), self._post_value(value)
 
     def values(self):
@@ -605,7 +618,7 @@ class FixedLengthValue(Booklet):
             self.sync()
 
         with self._thread_lock:
-            for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len):
+            for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_value(value)
 
     def get(self, key, default=None):
@@ -616,7 +629,7 @@ class FixedLengthValue(Booklet):
             self.sync()
 
         with self._thread_lock:
-            value = utils.get_value_fixed(self._file, key_hash, self._n_buckets, self._value_len)
+            value = utils.get_value_fixed(self._file, key_hash, self._n_buckets, self._value_len, self._index_offset)
 
         if isinstance(value, bytes):
             return self._post_value(value)
@@ -633,14 +646,14 @@ class FixedLengthValue(Booklet):
         if self.writable:
             with self._thread_lock:
                 for key, value in key_value_dict.items():
-                    n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size)
+                    n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, self._index_offset)
                     self._n_keys += n_extra_keys
 
         else:
             raise ValueError('File is open for read only.')
 
 
-    def prune(self, reindex=False):
+    def prune(self):
         """
         Prunes the old keys and associated values. Returns the recovered space in bytes.
         """
@@ -648,16 +661,16 @@ class FixedLengthValue(Booklet):
 
         if self.writable:
             with self._thread_lock:
-                n_keys, removed_count, n_buckets = utils.prune_file_fixed(self._file, reindex, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index, self._buffer_index_set)
+                n_keys, removed_count = utils.prune_file_fixed(self._file, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
                 self._n_keys = n_keys
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
 
-                if n_buckets != self._n_buckets:
-                    self._n_buckets = n_buckets
-                    self._file.seek(21)
-                    self._file.write(utils.int_to_bytes(n_buckets, 4))
-                    self._file.flush()
+                # Reset layout after prune (index always written at byte 200)
+                self._index_offset = utils.sub_index_init_pos
+                self._first_data_block_pos = utils.sub_index_init_pos + (self._n_buckets * utils.n_bytes_file)
+
+                self._file.flush()
 
                 return removed_count
         else:
@@ -676,7 +689,7 @@ class FixedLengthValue(Booklet):
     def __setitem__(self, key, value):
         if self.writable:
             with self._thread_lock:
-                n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size)
+                n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, self._index_offset)
                 self._n_keys += n_extra_keys
 
         else:
