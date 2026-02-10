@@ -8,7 +8,8 @@ import io
 import pathlib
 # import inspect
 from collections.abc import MutableMapping
-from typing import Union
+from typing import Union, Any, Optional, Iterator, Iterable, Tuple
+from datetime import datetime
 # from threading import Lock
 import portalocker
 # from itertools import count
@@ -52,7 +53,7 @@ class Booklet(MutableMapping):
     """
     Base class
     """
-    def _set_file_timestamp(self, timestamp=None):
+    def _set_file_timestamp(self, timestamp: Optional[Union[int, str, datetime]] = None):
         """
         Set the timestamp on the file.
         Accessed by self._file_timestamp
@@ -74,7 +75,7 @@ class Booklet(MutableMapping):
     #     ts_int_bytes = self._file
 
 
-    def set_metadata(self, data, timestamp=None):
+    def set_metadata(self, data: Any, timestamp: Optional[Union[int, str, datetime]] = None):
         """
         Set the metadata for the booklet.
 
@@ -97,7 +98,7 @@ class Booklet(MutableMapping):
         else:
             raise ValueError('File is open for read only.')
 
-    def get_metadata(self, include_timestamp=False):
+    def get_metadata(self, include_timestamp: bool = False) -> Optional[Union[Any, Tuple[Any, int]]]:
         """
         Retrieve the metadata for the booklet.
 
@@ -124,7 +125,7 @@ class Booklet(MutableMapping):
         else:
             return None
 
-    def _pre_key(self, key) -> bytes:
+    def _pre_key(self, key: Any) -> bytes:
 
         ## Serialize to bytes
         try:
@@ -134,14 +135,14 @@ class Booklet(MutableMapping):
 
         return key
 
-    def _post_key(self, key: bytes):
+    def _post_key(self, key: bytes) -> Any:
 
         ## Serialize from bytes
         key = self._key_serializer.loads(key)
 
         return key
 
-    def _pre_value(self, value) -> bytes:
+    def _pre_value(self, value: Any) -> bytes:
 
         ## Serialize to bytes
         try:
@@ -151,14 +152,14 @@ class Booklet(MutableMapping):
 
         return value
 
-    def _post_value(self, value: bytes):
+    def _post_value(self, value: bytes) -> Any:
 
         ## Serialize from bytes
         value = self._value_serializer.loads(value)
 
         return value
 
-    def keys(self):
+    def keys(self) -> Iterator[Any]:
         """
         Return an iterator over the booklet's keys.
         """
@@ -169,7 +170,7 @@ class Booklet(MutableMapping):
             for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_key(key)
 
-    def items(self):
+    def items(self) -> Iterator[Tuple[Any, Any]]:
         """
         Return an iterator over the booklet's (key, value) pairs.
         """
@@ -180,7 +181,7 @@ class Booklet(MutableMapping):
             for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_key(key), self._post_value(value)
 
-    def values(self):
+    def values(self) -> Iterator[Any]:
         """
         Return an iterator over the booklet's values.
         """
@@ -191,7 +192,7 @@ class Booklet(MutableMapping):
             for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_value(value)
 
-    def timestamps(self, include_value=False, decode_value=True):
+    def timestamps(self, include_value: bool = False, decode_value: bool = True) -> Iterator[Union[Tuple[Any, int], Tuple[Any, int, Any]]]:
         """
         Return an iterator for timestamps for all keys.
 
@@ -225,16 +226,16 @@ class Booklet(MutableMapping):
         else:
             raise ValueError('timestamps were not initialized with this file.')
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         return self.keys()
 
-    def __len__(self):
+    def __len__(self) -> int:
         """
         Return the number of keys in the booklet.
         """
         return self._n_keys
 
-    def __contains__(self, key):
+    def __contains__(self, key: Any) -> bool:
         """
         Check if key is in the booklet.
         """
@@ -248,7 +249,7 @@ class Booklet(MutableMapping):
             check = utils.contains_key(self._file, key_hash, self._n_buckets, self._index_offset)
         return check
 
-    def get(self, key, default=None):
+    def get(self, key: Any, default: Any = None) -> Any:
         """
         Return the value for key if key is in the booklet, else default.
 
@@ -278,7 +279,7 @@ class Booklet(MutableMapping):
         else:
             return default
 
-    def get_items(self, keys, default=None):
+    def get_items(self, keys: Iterable[Any], default: Any = None) -> Iterator[Tuple[Any, Any]]:
         """
         Return an iterator of (key, value) pairs for the given keys.
 
@@ -298,7 +299,7 @@ class Booklet(MutableMapping):
             value = self.get(key, default=default)
             yield key, value
 
-    def get_timestamp(self, key, include_value=False, decode_value=True, default=None):
+    def get_timestamp(self, key: Any, include_value: bool = False, decode_value: bool = True, default: Any = None) -> Union[int, Tuple[int, Any], Any]:
         """
         Get the timestamp associated with a key.
 
@@ -345,7 +346,7 @@ class Booklet(MutableMapping):
         else:
             raise ValueError('timestamps were not initialized with this file.')
 
-    def set_timestamp(self, key, timestamp):
+    def set_timestamp(self, key: Any, timestamp: Union[int, str, datetime]):
         """
         Set a timestamp for a specific key.
 
@@ -374,7 +375,7 @@ class Booklet(MutableMapping):
             raise ValueError('timestamps were not initialized with this file.')
 
 
-    def set(self, key, value, timestamp=None, encode_value=True):
+    def set(self, key: Any, value: Any, timestamp: Optional[Union[int, str, datetime]] = None, encode_value: bool = True):
         """
         Set a key/value pair.
 
@@ -425,7 +426,7 @@ class Booklet(MutableMapping):
             raise ValueError('File is open for read only.')
 
 
-    def prune(self, timestamp=None):
+    def prune(self, timestamp: Optional[Union[int, str, datetime]] = None) -> int:
         """
         Prune old keys and values from the booklet.
 
@@ -464,7 +465,7 @@ class Booklet(MutableMapping):
             raise ValueError('File is open for read only.')
 
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: Any) -> Any:
         """
         Return the value for key. Raises KeyError if not found.
         """
@@ -476,14 +477,14 @@ class Booklet(MutableMapping):
             return value
 
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: Any, value: Any):
         """
         Set key to value.
         """
         self.set(key, value)
 
 
-    def __delitem__(self, key):
+    def __delitem__(self, key: Any):
         """
         Remove key from the booklet. Raises KeyError if not found.
 
@@ -507,7 +508,7 @@ class Booklet(MutableMapping):
         else:
             raise ValueError('File is open for read only.')
 
-    def __enter__(self):
+    def __enter__(self) -> 'Booklet':
         return self
 
     def __exit__(self, *args):
@@ -548,7 +549,7 @@ class Booklet(MutableMapping):
     #     self._file_path.unlink()
 
 
-    def reopen(self, flag):
+    def reopen(self, flag: str):
         """
         Reopen the booklet file.
 
@@ -673,7 +674,7 @@ class VariableLengthValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
+    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_serializer: Optional[Union[str, Any]] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps: bool = True, init_bytes: Optional[bytes] = None):
         """
         Initialize a VariableLengthValue booklet.
 
@@ -753,7 +754,7 @@ class FixedLengthValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_len: int=None, n_buckets: int=12007, buffer_size: int = 2**22, init_bytes=None):
+    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_len: Optional[int] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_bytes: Optional[bytes] = None):
         """
         Initialize a FixedLengthValue booklet.
 
@@ -777,7 +778,7 @@ class FixedLengthValue(Booklet):
         utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, init_bytes)
 
 
-    def keys(self):
+    def keys(self) -> Iterator[Any]:
         """
         Return an iterator over the booklet's keys.
         """
@@ -788,7 +789,7 @@ class FixedLengthValue(Booklet):
             for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_key(key)
 
-    def items(self):
+    def items(self) -> Iterator[Tuple[Any, Any]]:
         """
         Return an iterator over the booklet's (key, value) pairs.
         """
@@ -799,7 +800,7 @@ class FixedLengthValue(Booklet):
             for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_key(key), self._post_value(value)
 
-    def values(self):
+    def values(self) -> Iterator[Any]:
         """
         Return an iterator over the booklet's values.
         """
@@ -810,7 +811,7 @@ class FixedLengthValue(Booklet):
             for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos):
                 yield self._post_value(value)
 
-    def get(self, key, default=None):
+    def get(self, key: Any, default: Any = None) -> Any:
         """
         Return the value for key if key is in the booklet, else default.
 
@@ -843,7 +844,7 @@ class FixedLengthValue(Booklet):
     # def __len__(self):
     #     return self._n_keys
 
-    def update(self, key_value_dict):
+    def update(self, key_value_dict: MutableMapping):
         """
         Update the booklet with key/value pairs from another mapping.
 
@@ -862,7 +863,7 @@ class FixedLengthValue(Booklet):
             raise ValueError('File is open for read only.')
 
 
-    def prune(self):
+    def prune(self) -> int:
         """
         Prune old keys and values from the booklet.
 
@@ -894,7 +895,7 @@ class FixedLengthValue(Booklet):
             raise ValueError('File is open for read only.')
 
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: Any) -> Any:
         """
         Return the value for key. Raises KeyError if not found.
         """
@@ -906,7 +907,7 @@ class FixedLengthValue(Booklet):
             return value
 
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: Any, value: Any):
         """
         Set key to value.
         """
@@ -924,7 +925,7 @@ class FixedLengthValue(Booklet):
 
 
 def open(
-    file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: str = None, value_serializer: str = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps=True, init_bytes=None):
+    file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_serializer: Optional[Union[str, Any]] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps: bool = True, init_bytes: Optional[bytes] = None) -> VariableLengthValue:
     """
     Open a persistent dictionary for reading and writing.
 
