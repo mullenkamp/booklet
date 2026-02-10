@@ -14,13 +14,6 @@ Install via pip::
 
   pip install booklet
 
-Or conda::
-
-  conda install -c mullenkamp booklet
-
-
-I'll probably put it on conda-forge once I feel appropriately motivated...
-
 
 Serialization
 -----------------------------
@@ -44,7 +37,7 @@ Write data using the context manager
 
   import booklet
 
-  with booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str', n_buckets=12007) as db:
+  with booklet.open('test.blt', 'n', value_serializer='pickle', key_serializer='str') as db:
     db['test_key'] = ['one', 2, 'three', 4]
 
 
@@ -94,7 +87,6 @@ When a key/value is "deleted", it's actually just flagged internally as deleted 
 
   with booklet.open('test.blt', 'w') as db:
     del db['test_key']
-    db.sync()
     db.prune()
 
 
@@ -126,6 +118,11 @@ Timestamps associated with each assigned item have been implemented, but can be 
 
     with booklet.open(file_path) as f:
         ts_new = f.get_timestamp(key)
+
+
+Auto Reindexing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Booklet now supports (as of version 0.10) automatic reindexing and consequently the user no longer needds to worry about setting an appropriate n_buckets values. When the load factor (number of keys / number of buckets) exceeds 1.0, the booklet will automatically increase the number of buckets and reindex the file to maintain performance. This occurs when the booklet is synced. This ensures that the database remains fast even as it grows beyond the initial `n_buckets` setting.
 
 
 Custom serializers
@@ -208,17 +205,13 @@ When we find the identical key hash, Booklet reads 6 bytes (key len and value le
 Deletes assign ndbp to 0 and reassign the prior data block it's original ndbp. This essentially just removes this data block from the key hash data block chain.
 A delete also happens when a user "overwrites" the same key.
 
-A "prune" method has been created that allows the user to remove "deleted" items. It has two optional parameters. If timestamps have been initialized in booklet, then the user can pass a timestamp that will remove all items older than that timestamp. The reindexing option allows the user to increase the n_buckets when the number items greatly exceeds the initialized n_buckets. The implementation essentially just clears the original index then iterates through all data blocks and rewrites only the data blocks that haven't been deleted. In the case of the reindexing, it determines the difference between the old index size and the new index size, expands the file by that difference, moves all of the data blocks to the end of the file, and then writes the newer (and longer) index to the file. Then it continues with the normal pruning procedure. 
+A "prune" method has been created that allows the user to remove "deleted" items. It has one optional parameter. If timestamps have been initialized in booklet, then the user can pass a timestamp that will remove all items older than that timestamp. 
 
 FixedValue
 ~~~~~~~~~~~
 The main difference from VariableValue is that the value length is globally fixed. The data block in a FixedValue object does not contain the value length as the value will always be the same global value length. The main advantage of this difference is that any overwrites of the same key can be written back to the same location on the file instead of always being appended to the end of the file. If a use-case includes many overwrites and the values are always the same size, then the FixedValue object is ideal.
 
 There are currently no timestamps in the FixedValue. This could be enabled in the future.
-
-Limitations
------------
-The main limitation is that booklet does not have automatic reindexing (increasing the n_buckets). In the current design, reindexing is computationally intensive when the file is large. The user should generally assign an appropriate n_buckets at initialization. This should be approximately the same number as the expected number of keys/values. The default is set at 12007. The "prune" method now has a reindexing option that allows the users to deliberately update/increase the index.
 
 Benchmarks
 -----------
