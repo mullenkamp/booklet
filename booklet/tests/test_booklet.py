@@ -24,6 +24,8 @@ tf1 = NamedTemporaryFile()
 file_path1 = tf1.name
 tf2 = NamedTemporaryFile()
 file_path2 = tf2.name
+tf3 = NamedTemporaryFile()
+file_path3 = tf3.name
 
 data_dict = {key: key*2 for key in range(2, 30)}
 data_dict[97] = 97*2 # key hash conflict test - 97 conflicts with 11
@@ -246,16 +248,14 @@ def test_prune(file_path):
 
     assert (removed_items > 0)  and (old_len > removed_items) and (new_len == old_len) and isinstance(test_value, int)
 
-    # Reindex
+    # Prune again (no deleted items left)
     with booklet.open(file_path, 'w') as f:
         old_len = len(f)
-        old_n_buckets = f._n_buckets
-        removed_items = f.prune(reindex=True)
-        new_n_buckets = f._n_buckets
+        removed_items = f.prune()
         new_len = len(f)
         test_value = f[2]
 
-    assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(test_value, int)
+    assert (removed_items == 0) and (new_len == old_len) and isinstance(test_value, int)
 
     # Remove the rest via timestamp filter
     timestamp = utils.make_timestamp_int()
@@ -670,16 +670,14 @@ def test_prune_fixed():
 
     assert (removed_items > 0)  and (old_len > removed_items) and (new_len == old_len) and isinstance(test_value, bytes)
 
-    # Reindex
+    # Prune again (no deleted items left)
     with FixedLengthValue(file_path, 'w') as f:
         old_len = len(f)
-        old_n_buckets = f._n_buckets
-        removed_items = f.prune(reindex=True)
-        new_n_buckets = f._n_buckets
+        removed_items = f.prune()
         new_len = len(f)
         test_value = f[2]
 
-    assert (removed_items == 0) and (new_n_buckets > old_n_buckets) and (new_len == old_len) and isinstance(test_value, bytes)
+    assert (removed_items == 0) and (new_len == old_len) and isinstance(test_value, bytes)
 
 
 def test_set_items_get_items_fixed():

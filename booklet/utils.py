@@ -33,6 +33,9 @@ from . import serializers
 
 sub_index_init_pos = 200
 
+index_offset_pos = 65
+first_data_block_pos_pos = 71
+
 # n_deletes_pos = 33
 n_keys_pos = 33
 file_timestamp_pos = 42
@@ -54,7 +57,7 @@ uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 metadata_key_bytes = b'adb01ebc1ba3433eb043527'
 metadata_key_hash = b'B~\xf5\t\xe6\xef,\xbf\x16nn\x82\x01'
 
-current_version = 4
+current_version = 5
 current_version_bytes = current_version.to_bytes(2, 'little', signed=False)
 
 init_n_buckets = 12007
@@ -64,6 +67,8 @@ n_buckets_reindex = {
     1728017: 20736017,
     20736017: None,
     }
+
+n_buckets_chain = sorted([k for k in n_buckets_reindex.keys()])
 
 ## TZ offset
 # if time.daylight:
@@ -100,11 +105,174 @@ n_buckets_reindex = {
 ### Functions
 
 
+def get_new_n_buckets(n_buckets):
+    """
+    Returns the next n_buckets from the reindex chain, or None if at max.
+    For non-mapped values, jump to the smallest mapped value larger than current.
+    """
+    if n_buckets in n_buckets_reindex:
+        return n_buckets_reindex[n_buckets]
+    # Find the smallest chain value larger than current
+    for chain_val in n_buckets_chain:
+        if chain_val > n_buckets:
+            return chain_val
+    return None
+
+
+def write_skip_block_variable(file, offset, dead_size, ts_bytes_len):
+    """
+    Write a single skip block over a dead region for variable-length files.
+    The block is a deleted data block (next_ptr=0) that spans the entire dead region.
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
+
+    overhead = init_data_block_len + ts_bytes_len
+    if dead_size < overhead + 1:
+        return
+
+    remaining = dead_size - overhead
+    # key_len = 1 (minimum), value_len = remaining - 1
+    key_len = 1
+    value_len = remaining - key_len
+
+    file.seek(offset)
+    block = b'\x00' * key_hash_len  # key_hash (doesn't matter)
+    block += b'\x00' * n_bytes_file  # next_ptr = 0 (deleted)
+    block += int_to_bytes(key_len, n_bytes_key)
+    block += int_to_bytes(value_len, n_bytes_value)
+    block += b'\x00' * (ts_bytes_len + key_len + value_len)
+    file.write(block)
+
+
+def write_skip_block_fixed(file, offset, dead_size, value_len):
+    """
+    Write skip block(s) over a dead region for fixed-length files.
+    Each block has size: key_hash_len + n_bytes_file + n_bytes_key + key_len + value_len.
+    We need to fill exactly dead_size bytes with deleted blocks.
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    overhead = one_extra_index_bytes_len + n_bytes_key
+
+    # Minimum block size: overhead + 1 (key_len=1) + value_len
+    min_block = overhead + 1 + value_len
+
+    pos = offset
+    end = offset + dead_size
+    while pos < end:
+        remaining = end - pos
+        if remaining < min_block:
+            break
+
+        # Use key_len = remaining - overhead - value_len to consume as much space as possible
+        key_len = remaining - overhead - value_len
+        if key_len < 1:
+            key_len = 1
+
+        block_size = overhead + key_len + value_len
+        file.seek(pos)
+        block = b'\x00' * key_hash_len
+        block += b'\x00' * n_bytes_file  # next_ptr = 0 (deleted)
+        block += int_to_bytes(key_len, n_bytes_key)
+        block += b'\x00' * (key_len + value_len)
+        file.write(block)
+        pos += block_size
+
+
+def reindex(file, n_buckets, new_n_buckets, index_offset, first_data_block_pos, write_buffer_size, ts_bytes_len, fixed_value_len=None):
+    """
+    Reindex using chain-following algorithm.
+    Appends new bucket index at EOF and rewires all chains.
+    Returns (new_index_offset, new_first_data_block_pos).
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+
+    # 1. Allocate new bucket index at EOF
+    new_index_offset = file.seek(0, 2)
+    write_init_bucket_indexes(file, new_n_buckets, new_index_offset, write_buffer_size)
+
+    # 2. For each bucket in old index, follow chains and rewire to new index
+    for old_bucket in range(n_buckets):
+        old_bucket_pos = index_offset + (old_bucket * n_bytes_file)
+        file.seek(old_bucket_pos)
+        data_block_pos = bytes_to_int(file.read(n_bytes_file))
+
+        if data_block_pos <= 1:
+            continue
+
+        while True:
+            file.seek(data_block_pos)
+            data_index = file.read(one_extra_index_bytes_len)
+            block_key_hash = data_index[:key_hash_len]
+            next_ptr = bytes_to_int(data_index[key_hash_len:])
+
+            if next_ptr == 0:
+                # Deleted block — skip
+                break
+
+            # This block is live — compute new bucket
+            new_bucket = bytes_to_int(block_key_hash) % new_n_buckets
+            new_bucket_pos = new_index_offset + (new_bucket * n_bytes_file)
+
+            # Read current head of new bucket
+            file.seek(new_bucket_pos)
+            current_head_bytes = file.read(n_bytes_file)
+            current_head = bytes_to_int(current_head_bytes)
+
+            # Set new bucket head to this block
+            file.seek(new_bucket_pos)
+            file.write(int_to_bytes(data_block_pos, n_bytes_file))
+
+            # Set this block's next_ptr to old head (or 1 if bucket was empty)
+            file.seek(data_block_pos + key_hash_len)
+            if current_head <= 1:
+                file.write(int_to_bytes(1, n_bytes_file))  # end of chain marker
+            else:
+                file.write(int_to_bytes(current_head, n_bytes_file))
+
+            if next_ptr == 1:
+                break
+            data_block_pos = next_ptr
+
+    # 3. Write skip block(s) over old index if it was relocated (not at byte 200)
+    if index_offset != sub_index_init_pos:
+        old_index_size = n_buckets * n_bytes_file
+        if fixed_value_len is not None:
+            write_skip_block_fixed(file, index_offset, old_index_size, fixed_value_len)
+        else:
+            write_skip_block_variable(file, index_offset, old_index_size, ts_bytes_len)
+
+    # 4. Update header
+    file.seek(21)
+    file.write(int_to_bytes(new_n_buckets, 4))
+
+    file.seek(index_offset_pos)
+    file.write(int_to_bytes(new_index_offset, n_bytes_file))
+
+    file.seek(first_data_block_pos_pos)
+    file.write(int_to_bytes(first_data_block_pos, n_bytes_file))
+
+    file.flush()
+
+    return new_index_offset, first_data_block_pos
+
+
 def make_timestamp_int(timestamp=None):
     """
-    The timestamp must be either None, an int of the number of microseconds in POSIX UTC time, an ISO 8601 datetime string with timezone, or a datetime object with timezone. None will create a timestamp of now.
+    Convert various timestamp formats to an integer of microseconds in POSIX UTC.
 
-    It will return an int of the number of microseconds in POSIX UTC time.
+    Parameters
+    ----------
+    timestamp : int, str, datetime, or None, optional
+        The timestamp to convert. It must be either None (current time), 
+        an int of the number of microseconds in POSIX UTC time, 
+        an ISO 8601 datetime string with timezone, or a datetime 
+        object with timezone.
+
+    Returns
+    -------
+    int
+        The number of microseconds in POSIX UTC time.
     """
     if timestamp is None:
         int_us = time.time_ns() // 1000
@@ -201,11 +369,11 @@ def get_index_bucket(key_hash, n_buckets):
     return bytes_to_int(key_hash) % n_buckets
 
 
-def get_bucket_index_pos(index_bucket):
+def get_bucket_index_pos(index_bucket, index_offset=sub_index_init_pos):
     """
 
     """
-    return sub_index_init_pos + (index_bucket * n_bytes_file)
+    return index_offset + (index_bucket * n_bytes_file)
 
 
 def get_first_data_block_pos(file, bucket_index_pos):
@@ -221,14 +389,14 @@ def get_first_data_block_pos(file, bucket_index_pos):
         return 0
 
 
-def get_last_data_block_pos(file, key_hash, n_buckets):
+def get_last_data_block_pos(file, key_hash, n_buckets, index_offset=sub_index_init_pos):
     """
     Puts a bunch of the previous functions together.
     """
     index_len = key_hash_len + n_bytes_file
 
     index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, index_offset)
     data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
 
     if data_block_pos:
@@ -249,22 +417,22 @@ def get_last_data_block_pos(file, key_hash, n_buckets):
         return 0
 
 
-def contains_key(file, key_hash, n_buckets):
+def contains_key(file, key_hash, n_buckets, index_offset=sub_index_init_pos):
     """
     Determine if a key is present in the file.
     """
-    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets, index_offset)
     if data_block_pos:
         return True
     else:
         return False
 
 
-def set_timestamp(file, key_hash, n_buckets, timestamp):
+def set_timestamp(file, key_hash, n_buckets, timestamp, index_offset=sub_index_init_pos):
     """
 
     """
-    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets, index_offset)
     if data_block_pos:
         ts_pos = data_block_pos + key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value
         file.seek(ts_pos)
@@ -277,11 +445,11 @@ def set_timestamp(file, key_hash, n_buckets, timestamp):
         return False
 
 
-def get_value(file, key_hash, n_buckets, ts_bytes_len=0):
+def get_value(file, key_hash, n_buckets, ts_bytes_len=0, index_offset=sub_index_init_pos):
     """
     Combines everything necessary to return a value.
     """
-    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets, index_offset)
     if data_block_pos:
         key_len_pos = data_block_pos + key_hash_len + n_bytes_file
         file.seek(key_len_pos)
@@ -297,11 +465,11 @@ def get_value(file, key_hash, n_buckets, ts_bytes_len=0):
     return value
 
 
-def get_value_ts(file, key_hash, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0):
+def get_value_ts(file, key_hash, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0, index_offset=sub_index_init_pos):
     """
     Combines everything necessary to return a value.
     """
-    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets, index_offset)
     if data_block_pos:
         key_len_pos = data_block_pos + key_hash_len + n_bytes_file
         file.seek(key_len_pos)
@@ -381,24 +549,36 @@ def iter_keys_value_from_start_end_pos(file, start, end, include_key, include_va
             # file.seek(ts_bytes_len + key_len + value_len, 1)
 
 
-def iter_keys_values(file, n_buckets, include_key, include_value, include_ts, ts_bytes_len):
+def iter_keys_values(file, n_buckets, include_key, include_value, include_ts, ts_bytes_len, index_offset=sub_index_init_pos, first_data_block_pos=0):
     """
 
     """
-    end = file.seek(0, 2)
-    start = sub_index_init_pos + (n_buckets * n_bytes_file)
+    file_end = file.seek(0, 2)
 
-    return iter_keys_value_from_start_end_pos(file, start, end, include_key, include_value, include_ts, ts_bytes_len)
+    if first_data_block_pos == 0:
+        first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+
+    if index_offset != sub_index_init_pos:
+        # Relocated index: scan two regions
+        # Region 1: [first_data_block_pos, index_offset)
+        yield from iter_keys_value_from_start_end_pos(file, first_data_block_pos, index_offset, include_key, include_value, include_ts, ts_bytes_len)
+        # Region 2: [index_offset + n_buckets*6, EOF)
+        start2 = index_offset + (n_buckets * n_bytes_file)
+        if start2 < file_end:
+            yield from iter_keys_value_from_start_end_pos(file, start2, file_end, include_key, include_value, include_ts, ts_bytes_len)
+    else:
+        # Standard layout: one region
+        yield from iter_keys_value_from_start_end_pos(file, first_data_block_pos, file_end, include_key, include_value, include_ts, ts_bytes_len)
 
 
-def assign_delete_flag(file, key_hash, n_buckets):
+def assign_delete_flag(file, key_hash, n_buckets, index_offset=sub_index_init_pos):
     """
     Assigns 0 at the key hash index and the key/value data block.
     """
     index_len = key_hash_len + n_bytes_file
 
     index_bucket = get_index_bucket(key_hash, n_buckets)
-    bucket_index_pos = get_bucket_index_pos(index_bucket)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, index_offset)
     first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
     if first_data_block_pos:
         previous_data_index_pos = bucket_index_pos
@@ -428,7 +608,7 @@ def assign_delete_flag(file, key_hash, n_buckets):
         return False
 
 
-def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, buffer_index_set, write_buffer_size, timestamp=None, ts_bytes_len=0):
+def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, buffer_index_set, write_buffer_size, timestamp=None, ts_bytes_len=0, index_offset=sub_index_init_pos):
     """
 
     """
@@ -455,7 +635,7 @@ def write_data_blocks(file, key, value, n_buckets, buffer_data, buffer_index, bu
     bd_space = write_buffer_size - bd_pos
     if write_len > bd_space:
         file_len = flush_data_buffer(file, buffer_data, file_len)
-        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
+        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets, index_offset)
         bd_pos = 0
 
     ## Append to buffers
@@ -488,7 +668,7 @@ def flush_data_buffer(file, buffer_data, write_pos):
         return write_pos
 
 
-def update_index(file, buffer_index, buffer_index_set, n_buckets):
+def update_index(file, buffer_index, buffer_index_set, n_buckets, index_offset=sub_index_init_pos):
     """
 
     """
@@ -509,7 +689,7 @@ def update_index(file, buffer_index, buffer_index_set, n_buckets):
         new_data_block_pos_bytes = index_data[key_hash_len:]
 
         index_bucket = get_index_bucket(key_hash, n_buckets)
-        bucket_index_pos = get_bucket_index_pos(index_bucket)
+        bucket_index_pos = get_bucket_index_pos(index_bucket, index_offset)
         first_data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
         if first_data_block_pos:
             previous_data_index_pos = bucket_index_pos
@@ -566,12 +746,18 @@ def clear(file, n_buckets, n_keys_pos, write_buffer_size):
     file.seek(n_keys_pos)
     file.write(int_to_bytes(0, 4))
 
+    ## Reset index_offset and first_data_block_pos in header
+    file.seek(index_offset_pos)
+    file.write(int_to_bytes(0, n_bytes_file))
+    file.seek(first_data_block_pos_pos)
+    file.write(int_to_bytes(0, n_bytes_file))
+
     ## Cut back the file to the bucket index
     write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
     file.flush()
 
 
-def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, write_buffer_size, ts_bytes_len, buffer_data, buffer_index, buffer_index_set):
+def prune_file(file, timestamp, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, write_buffer_size, ts_bytes_len, buffer_data, buffer_index, buffer_index_set, index_offset=sub_index_init_pos, first_data_block_pos=0):
     """
 
     """
@@ -581,93 +767,87 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
 
     file_len = file.seek(0, 2)
-    data_block_read_start_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
-    total_data_size = file_len - data_block_read_start_pos
-    data_block_write_start_pos = data_block_read_start_pos
-    n_keys = 0
 
-    ## Reindex if required
-    if reindex:
-        if isinstance(reindex, bool):
-            if n_buckets not in n_buckets_reindex:
-                raise ValueError('The existing n_buckets was not the original default value. If a non-default value is originally used, then the reindex value must be an int.')
-            new_n_buckets = n_buckets_reindex[n_buckets]
-        elif isinstance(reindex, int):
-            new_n_buckets = reindex
-        else:
-            raise TypeError('reindex must be either a bool or an int.')
+    if first_data_block_pos == 0:
+        first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
 
-        if new_n_buckets:
-            data_block_write_start_pos = sub_index_init_pos + (new_n_buckets * n_bytes_file)
-            extra_bytes = data_block_write_start_pos - data_block_read_start_pos
-            file_len = file_len + extra_bytes
-            os.ftruncate(file.fileno(), file_len)
+    # Build list of read regions
+    if index_offset != sub_index_init_pos:
+        # Relocated index: two regions
+        read_regions = [(first_data_block_pos, index_offset)]
+        start2 = index_offset + (n_buckets * n_bytes_file)
+        if start2 < file_len:
+            read_regions.append((start2, file_len))
+    else:
+        read_regions = [(first_data_block_pos, file_len)]
 
-            # Move old data blocks to the end of the new file
-            copy_file_range(file, file, total_data_size, data_block_read_start_pos, data_block_write_start_pos, write_buffer_size)
+    # Always write index at byte 200 and data after it
+    data_block_write_start_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
 
-            data_block_read_start_pos = data_block_write_start_pos
-            n_buckets = new_n_buckets
+    # Phase 1: Read all live blocks into memory
+    live_blocks = []
+    removed_count = 0
+    for region_start, region_end in read_regions:
+        data_block_read_start_pos = region_start
+        while data_block_read_start_pos < region_end:
+            file.seek(data_block_read_start_pos)
+            init_data_block = file.read(init_data_block_len)
 
-    ## Clear bucket indexes
+            next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+
+            key_len_bytes = init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key]
+            key_len = bytes_to_int(key_len_bytes)
+
+            value_len_bytes = init_data_block[one_extra_index_bytes_len + n_bytes_key:]
+            value_len = bytes_to_int(value_len_bytes)
+            ts_key_value_len = ts_bytes_len + key_len + value_len
+            if next_data_block_pos: # A value of 0 means it was deleted
+                ts_key_value_bytes = file.read(ts_key_value_len)
+
+                key_hash = init_data_block[:key_hash_len]
+
+                # Check if it's the metadata key - remove from n_keys at the end
+                if key_hash == metadata_key_hash:
+                    metadata_key_added = True
+                    live_blocks.append((key_hash, key_len_bytes, value_len_bytes, ts_key_value_bytes))
+
+                # timestamp filter - don't remove metadata even if older
+                elif timestamp and ts_bytes_len:
+                    ts_int = bytes_to_int(ts_key_value_bytes[:ts_bytes_len])
+                    if ts_int < timestamp:
+                        data_block_read_start_pos += init_data_block_len + ts_key_value_len
+                        removed_count += 1
+                        continue
+                    live_blocks.append((key_hash, key_len_bytes, value_len_bytes, ts_key_value_bytes))
+                else:
+                    live_blocks.append((key_hash, key_len_bytes, value_len_bytes, ts_key_value_bytes))
+            else:
+                removed_count += 1
+
+            data_block_read_start_pos += init_data_block_len + ts_key_value_len
+
+    # Phase 2: Clear bucket indexes and write all live blocks
     write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
 
-    ## Iter through data blocks and only add the non-deleted ones
-    # written_n_bytes = 0
-    removed_count = 0
-    while data_block_read_start_pos < file_len:
-        file.seek(data_block_read_start_pos)
-        init_data_block = file.read(init_data_block_len)
+    n_keys = 0
+    for key_hash, key_len_bytes, value_len_bytes, ts_key_value_bytes in live_blocks:
+        write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + value_len_bytes + ts_key_value_bytes
 
-        next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+        ## flush write buffer if the size is getting too large
+        write_len = len(write_bytes)
+        bd_pos = len(buffer_data)
 
-        key_len_bytes = init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key]
-        key_len = bytes_to_int(key_len_bytes)
+        bd_space = write_buffer_size - bd_pos
+        if write_len > bd_space:
+            data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
+            n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
+            bd_pos = 0
 
-        value_len_bytes = init_data_block[one_extra_index_bytes_len + n_bytes_key:]
-        value_len = bytes_to_int(value_len_bytes)
-        ts_key_value_len = ts_bytes_len + key_len + value_len
-        # ts_key_value_bytes = file.read(ts_key_value_len)
-        if next_data_block_pos: # A value of 0 means it was deleted
-            ts_key_value_bytes = file.read(ts_key_value_len)
+        ## Append to buffers
+        data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
 
-            key_hash = init_data_block[:key_hash_len]
-
-            # Check if it's the metadata key - remove from n_keys at the end
-            if key_hash == metadata_key_hash:
-                metadata_key_added = True
-
-            # timestamp filter - don't remove metadata even if older
-            elif timestamp and ts_bytes_len:
-                ts_int = bytes_to_int(ts_key_value_bytes[:ts_bytes_len])
-                if ts_int < timestamp:
-                    data_block_read_start_pos += init_data_block_len + ts_key_value_len
-                    removed_count += 1
-                    continue
-
-            write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + value_len_bytes + ts_key_value_bytes
-
-            ## flush write buffer if the size is getting too large
-            write_len = len(write_bytes)
-            bd_pos = len(buffer_data)
-
-            bd_space = write_buffer_size - bd_pos
-            if write_len > bd_space:
-                data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-                n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
-                bd_pos = 0
-
-            ## Append to buffers
-            data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
-
-            # buffer_index[key_hash] = data_pos_bytes
-            buffer_index.extend(key_hash + data_pos_bytes)
-            buffer_data.extend(write_bytes)
-        else:
-            removed_count += 1
-            # print(bytes_to_int(ts_key_value_bytes[ts_bytes_len:ts_bytes_len+key_len]))
-
-        data_block_read_start_pos += init_data_block_len + ts_key_value_len
+        buffer_index.extend(key_hash + data_pos_bytes)
+        buffer_data.extend(write_bytes)
 
     ## Finish writing if there's data left in buffer
     if buffer_data:
@@ -677,10 +857,16 @@ def prune_file(file, timestamp, reindex, n_buckets, n_bytes_file, n_bytes_key, n
     os.ftruncate(file.fileno(), data_block_write_start_pos)
     os.fsync(file.fileno())
 
+    ## Reset index_offset and first_data_block_pos in header
+    file.seek(index_offset_pos)
+    file.write(int_to_bytes(0, n_bytes_file))
+    file.seek(first_data_block_pos_pos)
+    file.write(int_to_bytes(0, n_bytes_file))
+
     if metadata_key_added:
         n_keys -= 1
 
-    return n_keys, removed_count, n_buckets
+    return n_keys, removed_count
 
 
 # def open_file(file_path, flag):
@@ -834,6 +1020,9 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             else:
                 self._ts_bytes_len = 0
 
+            self._index_offset = sub_index_init_pos
+            self._first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+
         self._n_bytes_file = n_bytes_file
         self._n_bytes_key = n_bytes_key
         self._n_bytes_value = n_bytes_value
@@ -915,6 +1104,20 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
     self._file_timestamp = bytes_to_int(base_param_bytes[file_timestamp_pos:file_timestamp_pos + timestamp_bytes_len])
 
     self.uuid = uuid.UUID(bytes=bytes(base_param_bytes[49:65]))
+
+    ## Read index_offset and first_data_block_pos (new in version 5)
+    raw_index_offset = bytes_to_int(base_param_bytes[index_offset_pos:index_offset_pos + n_bytes_file])
+    raw_first_data_block_pos = bytes_to_int(base_param_bytes[first_data_block_pos_pos:first_data_block_pos_pos + n_bytes_file])
+
+    if raw_index_offset == 0:
+        self._index_offset = sub_index_init_pos
+    else:
+        self._index_offset = raw_index_offset
+
+    if raw_first_data_block_pos == 0:
+        self._first_data_block_pos = sub_index_init_pos + (self._n_buckets * n_bytes_file)
+    else:
+        self._first_data_block_pos = raw_first_data_block_pos
 
     ## Assign attributes
     self._n_keys_pos = n_keys_pos
@@ -1133,6 +1336,9 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
             self._init_timestamps = 0
             self._ts_bytes_len = 0
 
+            self._index_offset = sub_index_init_pos
+            self._first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+
         self._n_bytes_file = n_bytes_file
         self._n_bytes_key = n_bytes_key
 
@@ -1175,6 +1381,20 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
     self._file_timestamp = bytes_to_int(base_param_bytes[file_timestamp_pos:file_timestamp_pos + timestamp_bytes_len])
 
     self.uuid = uuid.UUID(bytes=bytes(base_param_bytes[49:65]))
+
+    ## Read index_offset and first_data_block_pos (new in version 5)
+    raw_index_offset = bytes_to_int(base_param_bytes[index_offset_pos:index_offset_pos + n_bytes_file])
+    raw_first_data_block_pos = bytes_to_int(base_param_bytes[first_data_block_pos_pos:first_data_block_pos_pos + n_bytes_file])
+
+    if raw_index_offset == 0:
+        self._index_offset = sub_index_init_pos
+    else:
+        self._index_offset = raw_index_offset
+
+    if raw_first_data_block_pos == 0:
+        self._first_data_block_pos = sub_index_init_pos + (self._n_buckets * n_bytes_file)
+    else:
+        self._first_data_block_pos = raw_first_data_block_pos
 
     ## Other attrs
     self._n_keys_pos = n_keys_pos
@@ -1241,11 +1461,11 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_time
     return init_write_bytes
 
 
-def get_value_fixed(file, key_hash, n_buckets, value_len):
+def get_value_fixed(file, key_hash, n_buckets, value_len, index_offset=sub_index_init_pos):
     """
     Combines everything necessary to return a value.
     """
-    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets)
+    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets, index_offset)
     if data_block_pos:
         key_len_pos = data_block_pos + key_hash_len + n_bytes_file
         file.seek(key_len_pos)
@@ -1259,18 +1479,16 @@ def get_value_fixed(file, key_hash, n_buckets, value_len):
     return value
 
 
-def iter_keys_values_fixed(file, n_buckets, include_key, include_value, value_len):
+def _iter_keys_values_fixed_region(file, start, end, include_key, include_value, value_len):
     """
-
+    Iterate over fixed-length data blocks in a single region [start, end).
     """
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
     init_data_block_len = one_extra_index_bytes_len + n_bytes_key
 
-    file_len = file.seek(0, 2)
-    # file_len = len(file)
-    file.seek(sub_index_init_pos + (n_buckets * n_bytes_file))
+    file.seek(start)
 
-    while file.tell() < file_len:
+    while file.tell() < end:
         init_data_block = file.read(init_data_block_len)
         next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
         key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:])
@@ -1295,7 +1513,26 @@ def iter_keys_values_fixed(file, n_buckets, include_key, include_value, value_le
             file.seek(key_len + value_len, 1)
 
 
-def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_index, buffer_index_set, write_buffer_size):
+def iter_keys_values_fixed(file, n_buckets, include_key, include_value, value_len, index_offset=sub_index_init_pos, first_data_block_pos=0):
+    """
+
+    """
+    file_end = file.seek(0, 2)
+
+    if first_data_block_pos == 0:
+        first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+
+    if index_offset != sub_index_init_pos:
+        # Relocated index: scan two regions
+        yield from _iter_keys_values_fixed_region(file, first_data_block_pos, index_offset, include_key, include_value, value_len)
+        start2 = index_offset + (n_buckets * n_bytes_file)
+        if start2 < file_end:
+            yield from _iter_keys_values_fixed_region(file, start2, file_end, include_key, include_value, value_len)
+    else:
+        yield from _iter_keys_values_fixed_region(file, first_data_block_pos, file_end, include_key, include_value, value_len)
+
+
+def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_index, buffer_index_set, write_buffer_size, index_offset=sub_index_init_pos):
     """
 
     """
@@ -1317,7 +1554,7 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
     bd_space = write_buffer_size - bd_pos
     if write_len > bd_space:
         file_len = flush_data_buffer(file, buffer_data, file_len)
-        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
+        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets, index_offset)
         bd_pos = 0
 
     ## Append to buffers
@@ -1373,7 +1610,7 @@ def write_data_blocks_fixed(file, key, value, n_buckets, buffer_data, buffer_ind
 #     return removed_n_bytes
 
 
-def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_len, write_buffer_size, buffer_data, buffer_index, buffer_index_set):
+def prune_file_fixed(file, n_buckets, n_bytes_file, n_bytes_key, value_len, write_buffer_size, buffer_data, buffer_index, buffer_index_set, index_offset=sub_index_init_pos, first_data_block_pos=0):
     """
 
     """
@@ -1383,82 +1620,74 @@ def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_
     init_data_block_len = one_extra_index_bytes_len + n_bytes_key
 
     file_len = file.seek(0, 2)
-    data_block_read_start_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
-    total_data_size = file_len - data_block_read_start_pos
-    data_block_write_start_pos = data_block_read_start_pos
-    n_keys = 0
 
-    ## Reindex if required
-    if reindex:
-        if isinstance(reindex, bool):
-            if n_buckets not in n_buckets_reindex:
-                raise ValueError('The existing n_buckets was not the original default value. If a non-default value is originally used, then the reindex value must be an int.')
-            new_n_buckets = n_buckets_reindex[n_buckets]
-        elif isinstance(reindex, int):
-            new_n_buckets = reindex
-        else:
-            raise TypeError('reindex must be either a bool or an int.')
+    if first_data_block_pos == 0:
+        first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
 
-        if new_n_buckets:
-            data_block_write_start_pos = sub_index_init_pos + (new_n_buckets * n_bytes_file)
-            extra_bytes = data_block_write_start_pos - data_block_read_start_pos
-            file_len = file_len + extra_bytes
-            os.ftruncate(file.fileno(), file_len)
+    # Build list of read regions
+    if index_offset != sub_index_init_pos:
+        read_regions = [(first_data_block_pos, index_offset)]
+        start2 = index_offset + (n_buckets * n_bytes_file)
+        if start2 < file_len:
+            read_regions.append((start2, file_len))
+    else:
+        read_regions = [(first_data_block_pos, file_len)]
 
-            # Move old data blocks to the end of the new file
-            copy_file_range(file, file, total_data_size, data_block_read_start_pos, data_block_write_start_pos, write_buffer_size)
+    # Always write index at byte 200 and data after it
+    data_block_write_start_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
 
-            data_block_read_start_pos = data_block_write_start_pos
-            n_buckets = new_n_buckets
+    # Phase 1: Read all live blocks into memory
+    live_blocks = []
+    removed_count = 0
+    for region_start, region_end in read_regions:
+        data_block_read_start_pos = region_start
+        while data_block_read_start_pos < region_end:
+            file.seek(data_block_read_start_pos)
+            init_data_block = file.read(init_data_block_len)
 
-    ## Clear bucket indexes
+            next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+
+            key_len_bytes = init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key]
+            key_len = bytes_to_int(key_len_bytes)
+
+            key_value_len = key_len + value_len
+            if next_data_block_pos: # A value of 0 means it was deleted
+                key_value_bytes = file.read(key_value_len)
+
+                key_hash = init_data_block[:key_hash_len]
+
+                # Check if it's the metadata key - remove from n_keys at the end
+                if key_hash == metadata_key_hash:
+                    metadata_key_added = True
+
+                live_blocks.append((key_hash, key_len_bytes, key_value_bytes))
+            else:
+                removed_count += 1
+
+            data_block_read_start_pos += init_data_block_len + key_value_len
+
+    # Phase 2: Clear bucket indexes and write all live blocks
     write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
 
-    ## Iter through data blocks and only add the non-deleted ones
-    # written_n_bytes = 0
-    removed_count = 0
-    while data_block_read_start_pos < file_len:
-        file.seek(data_block_read_start_pos)
-        init_data_block = file.read(init_data_block_len)
+    n_keys = 0
+    for key_hash, key_len_bytes, key_value_bytes in live_blocks:
+        write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + key_value_bytes
 
-        next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+        ## flush write buffer if the size is getting too large
+        write_len = len(write_bytes)
+        bd_pos = len(buffer_data)
 
-        key_len_bytes = init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key]
-        key_len = bytes_to_int(key_len_bytes)
+        bd_space = write_buffer_size - bd_pos
+        if write_len > bd_space:
+            data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
+            n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
+            bd_pos = 0
 
-        key_value_len = key_len + value_len
-        # key_value_bytes = file.read(key_value_len)
-        if next_data_block_pos: # A value of 0 means it was deleted
-            key_value_bytes = file.read(key_value_len)
+        ## Append to buffers
+        data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
 
-            key_hash = init_data_block[:key_hash_len]
-
-            # Check if it's the metadata key - remove from n_keys at the end
-            if key_hash == metadata_key_hash:
-                metadata_key_added = True
-
-            write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + key_value_bytes
-
-            ## flush write buffer if the size is getting too large
-            write_len = len(write_bytes)
-            bd_pos = len(buffer_data)
-
-            bd_space = write_buffer_size - bd_pos
-            if write_len > bd_space:
-                data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-                n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
-                bd_pos = 0
-
-            ## Append to buffers
-            data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
-
-            buffer_index.extend(key_hash + data_pos_bytes)
-            buffer_data.extend(write_bytes)
-        else:
-            removed_count += 1
-            # print(bytes_to_int(ts_key_value_bytes[ts_bytes_len:ts_bytes_len+key_len]))
-
-        data_block_read_start_pos += init_data_block_len + key_value_len
+        buffer_index.extend(key_hash + data_pos_bytes)
+        buffer_data.extend(write_bytes)
 
     ## Finish writing if there's data left in buffer
     if buffer_data:
@@ -1468,10 +1697,16 @@ def prune_file_fixed(file, reindex, n_buckets, n_bytes_file, n_bytes_key, value_
     os.ftruncate(file.fileno(), data_block_write_start_pos)
     os.fsync(file.fileno())
 
+    ## Reset index_offset and first_data_block_pos in header
+    file.seek(index_offset_pos)
+    file.write(int_to_bytes(0, n_bytes_file))
+    file.seek(first_data_block_pos_pos)
+    file.write(int_to_bytes(0, n_bytes_file))
+
     if metadata_key_added:
         n_keys -= 1
 
-    return n_keys, removed_count, n_buckets
+    return n_keys, removed_count
 
 
 
