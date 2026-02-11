@@ -447,52 +447,76 @@ def set_timestamp(file, key_hash, n_buckets, timestamp, index_offset=sub_index_i
 
 def get_value(file, key_hash, n_buckets, ts_bytes_len=0, index_offset=sub_index_init_pos):
     """
-    Combines everything necessary to return a value.
+    Combined chain traversal and value read. Reads key_len/value_len in the
+    same read as the chain index, avoiding a second seek+read on match.
     """
-    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets, index_offset)
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    header_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
+
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, index_offset)
+    data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
+
     if data_block_pos:
-        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-        file.seek(key_len_pos)
-        key_len_value_len = file.read(n_bytes_key + n_bytes_value)
-        key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
-        value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
+        while True:
+            file.seek(data_block_pos)
+            header = file.read(header_len)
+            next_data_block_pos = bytes_to_int(header[key_hash_len:one_extra_index_bytes_len])
+            if next_data_block_pos:
+                if header[:key_hash_len] == key_hash:
+                    key_len = bytes_to_int(header[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+                    value_len = bytes_to_int(header[one_extra_index_bytes_len + n_bytes_key:])
+                    file.seek(ts_bytes_len + key_len, 1)
+                    return file.read(value_len)
+                elif next_data_block_pos == 1:
+                    return False
+            else:
+                return False
+            data_block_pos = next_data_block_pos
 
-        file.seek(ts_bytes_len + key_len, 1)
-        value = file.read(value_len)
-    else:
-        value = False
-
-    return value
+    return False
 
 
 def get_value_ts(file, key_hash, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0, index_offset=sub_index_init_pos):
     """
-    Combines everything necessary to return a value.
+    Combined chain traversal and value/timestamp read.
     """
-    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets, index_offset)
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    header_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
+
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, index_offset)
+    data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
+
     if data_block_pos:
-        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-        file.seek(key_len_pos)
-        key_len_value_len = file.read(n_bytes_key + n_bytes_value)
-        key_len = bytes_to_int(key_len_value_len[:n_bytes_key])
-        value_len = bytes_to_int(key_len_value_len[n_bytes_key:])
+        while True:
+            file.seek(data_block_pos)
+            header = file.read(header_len)
+            next_data_block_pos = bytes_to_int(header[key_hash_len:one_extra_index_bytes_len])
+            if next_data_block_pos:
+                if header[:key_hash_len] == key_hash:
+                    key_len = bytes_to_int(header[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+                    value_len = bytes_to_int(header[one_extra_index_bytes_len + n_bytes_key:])
 
-        if include_value and include_ts:
-            ts_key_value = file.read(ts_bytes_len + key_len + value_len)
-            ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
-            value = ts_key_value[ts_bytes_len + key_len:]
-            output = value, ts_int
-        elif include_value:
-            file.seek(ts_bytes_len + key_len, 1)
-            output = (file.read(value_len), None)
-        elif include_ts:
-            output = (None, bytes_to_int(file.read(ts_bytes_len)))
-        else:
-            raise ValueError('include_value and/or include_timestamp must be True.')
-    else:
-        output = False
+                    if include_value and include_ts:
+                        ts_key_value = file.read(ts_bytes_len + key_len + value_len)
+                        ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
+                        value = ts_key_value[ts_bytes_len + key_len:]
+                        return value, ts_int
+                    elif include_value:
+                        file.seek(ts_bytes_len + key_len, 1)
+                        return (file.read(value_len), None)
+                    elif include_ts:
+                        return (None, bytes_to_int(file.read(ts_bytes_len)))
+                    else:
+                        raise ValueError('include_value and/or include_timestamp must be True.')
+                elif next_data_block_pos == 1:
+                    return False
+            else:
+                return False
+            data_block_pos = next_data_block_pos
 
-    return output
+    return False
 
 
 def iter_keys_value_from_start_end_pos(file, start, end, include_key, include_value, include_ts, ts_bytes_len):
@@ -953,7 +977,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
                 #     flock(self._fd, LOCK_EX)
         else:
             if is_file:
-                self._file = io.open(fp, 'rb', buffering=0)
+                self._file = io.open(fp, 'rb')
     
                 ## Lock
                 portalocker.lock(self._file, portalocker.LOCK_SH)
@@ -1272,7 +1296,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
 
         else:
             if is_file:
-                self._file = io.open(fp, 'rb', buffering=0)
+                self._file = io.open(fp, 'rb')
 
                 ## Lock
                 portalocker.lock(self._file, portalocker.LOCK_SH)
@@ -1463,20 +1487,32 @@ def init_base_params_fixed(self, key_serializer, value_len, n_buckets, file_time
 
 def get_value_fixed(file, key_hash, n_buckets, value_len, index_offset=sub_index_init_pos):
     """
-    Combines everything necessary to return a value.
+    Combined chain traversal and value read for fixed-length values.
     """
-    data_block_pos = get_last_data_block_pos(file, key_hash, n_buckets, index_offset)
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    header_len = one_extra_index_bytes_len + n_bytes_key
+
+    index_bucket = get_index_bucket(key_hash, n_buckets)
+    bucket_index_pos = get_bucket_index_pos(index_bucket, index_offset)
+    data_block_pos = get_first_data_block_pos(file, bucket_index_pos)
+
     if data_block_pos:
-        key_len_pos = data_block_pos + key_hash_len + n_bytes_file
-        file.seek(key_len_pos)
-        key_len = bytes_to_int(file.read(n_bytes_key))
+        while True:
+            file.seek(data_block_pos)
+            header = file.read(header_len)
+            next_data_block_pos = bytes_to_int(header[key_hash_len:one_extra_index_bytes_len])
+            if next_data_block_pos:
+                if header[:key_hash_len] == key_hash:
+                    key_len = bytes_to_int(header[one_extra_index_bytes_len:])
+                    file.seek(key_len, 1)
+                    return file.read(value_len)
+                elif next_data_block_pos == 1:
+                    return False
+            else:
+                return False
+            data_block_pos = next_data_block_pos
 
-        file.seek(key_len, 1)
-        value = file.read(value_len)
-    else:
-        value = False
-
-    return value
+    return False
 
 
 def _iter_keys_values_fixed_region(file, start, end, include_key, include_value, value_len):
