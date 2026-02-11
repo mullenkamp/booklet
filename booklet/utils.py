@@ -1109,12 +1109,12 @@ def read_base_params_variable(self, base_param_bytes, key_serializer, value_seri
     raw_index_offset = bytes_to_int(base_param_bytes[index_offset_pos:index_offset_pos + n_bytes_file])
     raw_first_data_block_pos = bytes_to_int(base_param_bytes[first_data_block_pos_pos:first_data_block_pos_pos + n_bytes_file])
 
-    if raw_index_offset == 0:
+    if raw_index_offset == 0 or raw_index_offset == 52983525027888:
         self._index_offset = sub_index_init_pos
     else:
         self._index_offset = raw_index_offset
 
-    if raw_first_data_block_pos == 0:
+    if raw_first_data_block_pos == 0 or raw_first_data_block_pos == 52983525027888:
         self._first_data_block_pos = sub_index_init_pos + (self._n_buckets * n_bytes_file)
     else:
         self._first_data_block_pos = raw_first_data_block_pos
@@ -1386,12 +1386,12 @@ def read_base_params_fixed(self, base_param_bytes, key_serializer):
     raw_index_offset = bytes_to_int(base_param_bytes[index_offset_pos:index_offset_pos + n_bytes_file])
     raw_first_data_block_pos = bytes_to_int(base_param_bytes[first_data_block_pos_pos:first_data_block_pos_pos + n_bytes_file])
 
-    if raw_index_offset == 0:
+    if raw_index_offset == 0 or raw_index_offset == 52983525027888:
         self._index_offset = sub_index_init_pos
     else:
         self._index_offset = raw_index_offset
 
-    if raw_first_data_block_pos == 0:
+    if raw_first_data_block_pos == 0 or raw_first_data_block_pos == 52983525027888:
         self._first_data_block_pos = sub_index_init_pos + (self._n_buckets * n_bytes_file)
     else:
         self._first_data_block_pos = raw_first_data_block_pos
