@@ -565,7 +565,7 @@ class Booklet(MutableMapping):
             portalocker.lock(self._file, portalocker.LOCK_EX)
             self.writable = True
         elif flag == 'r':
-            self._file = io.open(self._file_path, 'rb', buffering=0)
+            self._file = io.open(self._file_path, 'rb')
             portalocker.lock(self._file, portalocker.LOCK_SH)
             self.writable = False
         else:
