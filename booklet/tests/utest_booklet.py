@@ -53,9 +53,9 @@ def set_item(f, key, value):
 ##############################################
 ### Tests
 
-print(__version__)
+print(booklet.__version__)
 
-with VariableValue(file_path1, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=True) as f:
+with booklet.VariableValue(file_path1, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=True) as f:
     for key, value in data_dict.items():
         f[key] = value
 
@@ -65,7 +65,7 @@ indexes = [11, 12]
 for index in indexes:
     # _ = data_dict.pop(index)
 
-    with VariableValue(file_path1, 'w') as f:
+    with booklet.VariableValue(file_path1, 'w') as f:
         f[index] = 0
         f[index] = 0
         del f[index]
@@ -83,7 +83,7 @@ for index in indexes:
     # assert new_len == len(data_dict)
 
 
-self = VariableValue(file_path1, 'w')
+self = booklet.VariableValue(file_path1, 'w')
 # self[97] = 97*2
 # self.sync()
 file = self._file
@@ -92,7 +92,7 @@ buffer_index = self._buffer_index
 
 self.prune()
 self.prune(reindex=True)
-timestamp = utils.make_timestamp_int()
+timestamp = booklet.utils.make_timestamp_int()
 self.prune(timestamp=timestamp)
 
 self.close()
@@ -170,18 +170,18 @@ b2 = b'0' * chunk_size
 n = 1000000
 
 def make_test_file(n):
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
+    with booklet.VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
         for i in range(n):
             f[i] = b2
 
 
 def test_index_speed1(n):
-    with VariableValue(file_path, 'r') as f:
+    with booklet.VariableValue(file_path, 'r') as f:
         for i in range(n):
             val = f[i]
 
 def test_index_speed2(n):
-    with VariableValue(file_path, 'r') as f:
+    with booklet.VariableValue(file_path, 'r') as f:
         for k, v in f.items():
             pass
 
@@ -200,7 +200,7 @@ print(time() - t1)
 
 os.remove(file_path)
 
-f = VariableValue(file_path, 'r')
+f = booklet.VariableValue(file_path, 'r')
 
 iter1 = f.items()
 
@@ -212,15 +212,15 @@ val = f[1]
 
 
 def test_open_read():
-    with VariableValue(file_path, 'r') as f:
+    with booklet.VariableValue(file_path, 'r') as f:
         pass
 
 def test_open_write():
-    with VariableValue(file_path, 'w') as f:
+    with booklet.VariableValue(file_path, 'w') as f:
         pass
 
 def test_create_file():
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
+    with booklet.VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
         pass
 
 
@@ -232,21 +232,21 @@ chunk_size = 1000
 b2 = b'0' * chunk_size
 n = 1000000
 
-def make_test_file(n):
-    with SqliteDict(file_path, outer_stack=False, flag='n') as f:
-        for i in range(n):
-            f[i] = b2
-        f.commit()
+# def make_test_file(n):
+#     with SqliteDict(file_path, outer_stack=False, flag='n') as f:
+#         for i in range(n):
+#             f[i] = b2
+#         f.commit()
 
-def test_index_speed1(n):
-    with SqliteDict(file_path, outer_stack=False, flag='r') as f:
-        for i in range(n):
-            val = f[i]
+# def test_index_speed1(n):
+#     with SqliteDict(file_path, outer_stack=False, flag='r') as f:
+#         for i in range(n):
+#             val = f[i]
 
-def test_index_speed2(n):
-    with SqliteDict(file_path, outer_stack=False, flag='r') as f:
-        for k, v in f.items():
-            pass
+# def test_index_speed2(n):
+#     with SqliteDict(file_path, outer_stack=False, flag='r') as f:
+#         for k, v in f.items():
+#             pass
 
 
 t1 = time()
