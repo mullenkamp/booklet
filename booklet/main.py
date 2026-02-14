@@ -4,7 +4,7 @@
 
 """
 import io
-# import mmap
+import mmap
 import pathlib
 # import inspect
 from collections.abc import MutableMapping
@@ -114,7 +114,10 @@ class Booklet(MutableMapping):
             The metadata object. If include_timestamp is True, returns (metadata, timestamp). 
             Returns None if no metadata is set.
         """
-        output = utils.get_value_ts(self._file, utils.metadata_key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len, self._index_offset)
+        if self._mmap is not None:
+            output = utils.mmap_get_value_ts(self._mmap, utils.metadata_key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len, self._index_offset)
+        else:
+            output = utils.get_value_ts(self._file, utils.metadata_key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len, self._index_offset)
 
         if output:
             value, ts_int = output
@@ -167,8 +170,12 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
-            for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                yield self._post_key(key)
+            if self._mmap is not None:
+                for key in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_key(key)
+            else:
+                for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_key(key)
 
     def items(self) -> Iterator[Tuple[Any, Any]]:
         """
@@ -178,8 +185,12 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
-            for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                yield self._post_key(key), self._post_value(value)
+            if self._mmap is not None:
+                for key, value in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_key(key), self._post_value(value)
+            else:
+                for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_key(key), self._post_value(value)
 
     def values(self) -> Iterator[Any]:
         """
@@ -189,8 +200,12 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
-            for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                yield self._post_value(value)
+            if self._mmap is not None:
+                for value in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_value(value)
+            else:
+                for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_value(value)
 
     def timestamps(self, include_value: bool = False, decode_value: bool = True) -> Iterator[Union[Tuple[Any, int], Tuple[Any, int, Any]]]:
         """
@@ -201,7 +216,7 @@ class Booklet(MutableMapping):
         include_value : bool, optional
             Whether to include the value in the iterator. Defaults to False.
         decode_value : bool, optional
-            Whether to decode the value using the value_serializer. 
+            Whether to decode the value using the value_serializer.
             Only relevant if include_value is True. Defaults to True.
 
         Yields
@@ -215,14 +230,24 @@ class Booklet(MutableMapping):
                 self.sync()
 
             with self._thread_lock:
-                if include_value:
-                    for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                        if decode_value:
-                            value = self._post_value(value)
-                        yield self._post_key(key), ts_int, value
+                if self._mmap is not None:
+                    if include_value:
+                        for key, ts_int, value in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, True, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                            if decode_value:
+                                value = self._post_value(value)
+                            yield self._post_key(key), ts_int, value
+                    else:
+                        for key, ts_int in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, False, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                            yield self._post_key(key), ts_int
                 else:
-                    for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                        yield self._post_key(key), ts_int
+                    if include_value:
+                        for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                            if decode_value:
+                                value = self._post_value(value)
+                            yield self._post_key(key), ts_int, value
+                    else:
+                        for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
+                            yield self._post_key(key), ts_int
         else:
             raise ValueError('timestamps were not initialized with this file.')
 
@@ -246,7 +271,10 @@ class Booklet(MutableMapping):
             return True
 
         with self._thread_lock:
-            check = utils.contains_key(self._file, key_hash, self._n_buckets, self._index_offset)
+            if self._mmap is not None:
+                check = utils.mmap_contains_key(self._mmap, key_hash, self._n_buckets, self._index_offset)
+            else:
+                check = utils.contains_key(self._file, key_hash, self._n_buckets, self._index_offset)
         return check
 
     def get(self, key: Any, default: Any = None) -> Any:
@@ -272,7 +300,10 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
-            value = utils.get_value(self._file, key_hash, self._n_buckets, self._ts_bytes_len, self._index_offset)
+            if self._mmap is not None:
+                value = utils.mmap_get_value(self._mmap, key_hash, self._n_buckets, self._ts_bytes_len, self._index_offset)
+            else:
+                value = utils.get_value(self._file, key_hash, self._n_buckets, self._ts_bytes_len, self._index_offset)
 
         if isinstance(value, bytes):
             return self._post_value(value)
@@ -329,7 +360,10 @@ class Booklet(MutableMapping):
                 self.sync()
 
             with self._thread_lock:
-                output = utils.get_value_ts(self._file, key_hash, self._n_buckets, include_value, True, self._ts_bytes_len, self._index_offset)
+                if self._mmap is not None:
+                    output = utils.mmap_get_value_ts(self._mmap, key_hash, self._n_buckets, include_value, True, self._ts_bytes_len, self._index_offset)
+                else:
+                    output = utils.get_value_ts(self._file, key_hash, self._n_buckets, include_value, True, self._ts_bytes_len, self._index_offset)
 
             if output:
                 value, ts_int = output
@@ -534,6 +568,9 @@ class Booklet(MutableMapping):
         Sync and close the booklet file.
         """
         self.sync()
+        if self._mmap is not None:
+            self._mmap.close()
+            self._mmap = None
         # self._finalizer()
         try:
             portalocker.lock(self._file, portalocker.LOCK_UN)
@@ -556,7 +593,7 @@ class Booklet(MutableMapping):
         Parameters
         ----------
         flag : str
-            The mode to open the file in. Must be either 'r' (read-only) 
+            The mode to open the file in. Must be either 'r' (read-only)
             or 'w' (read-write).
         """
         self.close()
@@ -564,10 +601,14 @@ class Booklet(MutableMapping):
             self._file = io.open(self._file_path, 'r+b', buffering=0)
             portalocker.lock(self._file, portalocker.LOCK_EX)
             self.writable = True
+            self._mmap = None
         elif flag == 'r':
             self._file = io.open(self._file_path, 'rb')
             portalocker.lock(self._file, portalocker.LOCK_SH)
             self.writable = False
+            self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
+            if hasattr(self._mmap, 'madvise') and hasattr(mmap, 'MADV_RANDOM'):
+                self._mmap.madvise(mmap.MADV_RANDOM)
         else:
             raise ValueError("flag must be either 'r' or 'w'.")
 
@@ -575,7 +616,7 @@ class Booklet(MutableMapping):
         self._buffer_index = bytearray()
         self._buffer_index_set = set()
 
-        self._finalizer = weakref.finalize(self, utils.close_files, self._file, utils.n_keys_crash, self._n_keys_pos, self.writable)
+        self._finalizer = weakref.finalize(self, utils.close_files, self._file, utils.n_keys_crash, self._n_keys_pos, self.writable, self._mmap)
 
 
     def sync(self):
@@ -786,8 +827,12 @@ class FixedLengthValue(Booklet):
             self.sync()
 
         with self._thread_lock:
-            for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos):
-                yield self._post_key(key)
+            if self._mmap is not None:
+                for key in utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_key(key)
+            else:
+                for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_key(key)
 
     def items(self) -> Iterator[Tuple[Any, Any]]:
         """
@@ -797,8 +842,12 @@ class FixedLengthValue(Booklet):
             self.sync()
 
         with self._thread_lock:
-            for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos):
-                yield self._post_key(key), self._post_value(value)
+            if self._mmap is not None:
+                for key, value in utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_key(key), self._post_value(value)
+            else:
+                for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_key(key), self._post_value(value)
 
     def values(self) -> Iterator[Any]:
         """
@@ -808,8 +857,12 @@ class FixedLengthValue(Booklet):
             self.sync()
 
         with self._thread_lock:
-            for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos):
-                yield self._post_value(value)
+            if self._mmap is not None:
+                for value in utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_value(value)
+            else:
+                for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos):
+                    yield self._post_value(value)
 
     def get(self, key: Any, default: Any = None) -> Any:
         """
@@ -834,7 +887,10 @@ class FixedLengthValue(Booklet):
             self.sync()
 
         with self._thread_lock:
-            value = utils.get_value_fixed(self._file, key_hash, self._n_buckets, self._value_len, self._index_offset)
+            if self._mmap is not None:
+                value = utils.mmap_get_value_fixed(self._mmap, key_hash, self._n_buckets, self._value_len, self._index_offset)
+            else:
+                value = utils.get_value_fixed(self._file, key_hash, self._n_buckets, self._value_len, self._index_offset)
 
         if isinstance(value, bytes):
             return self._post_value(value)
