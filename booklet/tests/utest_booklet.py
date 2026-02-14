@@ -5,17 +5,24 @@ Created on Sun Mar 10 13:55:17 2024
 
 @author: mike
 """
+import sys
 import pytest
 import io
 import os
-from booklet import __version__, FixedValue, VariableValue, utils
 from tempfile import NamedTemporaryFile
 import concurrent.futures
 from hashlib import blake2s
 import mmap
 from time import time
-from sqlitedict import SqliteDict
+# from sqlitedict import SqliteDict
 from threading import Lock
+
+module_path = '/home/mike/git/booklet'
+if module_path not in sys.path:
+    sys.path.append(module_path)
+
+import booklet
+
 
 ##############################################
 ### Parameters
@@ -46,9 +53,9 @@ def set_item(f, key, value):
 ##############################################
 ### Tests
 
-print(__version__)
+print(booklet.__version__)
 
-with VariableValue(file_path1, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=True) as f:
+with booklet.VariableValue(file_path1, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=True) as f:
     for key, value in data_dict.items():
         f[key] = value
 
@@ -58,7 +65,7 @@ indexes = [11, 12]
 for index in indexes:
     # _ = data_dict.pop(index)
 
-    with VariableValue(file_path1, 'w') as f:
+    with booklet.VariableValue(file_path1, 'w') as f:
         f[index] = 0
         f[index] = 0
         del f[index]
@@ -76,7 +83,7 @@ for index in indexes:
     # assert new_len == len(data_dict)
 
 
-self = VariableValue(file_path1, 'w')
+self = booklet.VariableValue(file_path1, 'w')
 # self[97] = 97*2
 # self.sync()
 file = self._file
@@ -85,7 +92,7 @@ buffer_index = self._buffer_index
 
 self.prune()
 self.prune(reindex=True)
-timestamp = utils.make_timestamp_int()
+timestamp = booklet.utils.make_timestamp_int()
 self.prune(timestamp=timestamp)
 
 self.close()
@@ -163,18 +170,18 @@ b2 = b'0' * chunk_size
 n = 1000000
 
 def make_test_file(n):
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
+    with booklet.VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
         for i in range(n):
             f[i] = b2
 
 
 def test_index_speed1(n):
-    with VariableValue(file_path, 'r') as f:
+    with booklet.VariableValue(file_path, 'r') as f:
         for i in range(n):
             val = f[i]
 
 def test_index_speed2(n):
-    with VariableValue(file_path, 'r') as f:
+    with booklet.VariableValue(file_path, 'r') as f:
         for k, v in f.items():
             pass
 
@@ -193,7 +200,7 @@ print(time() - t1)
 
 os.remove(file_path)
 
-f = VariableValue(file_path, 'r')
+f = booklet.VariableValue(file_path, 'r')
 
 iter1 = f.items()
 
@@ -205,15 +212,15 @@ val = f[1]
 
 
 def test_open_read():
-    with VariableValue(file_path, 'r') as f:
+    with booklet.VariableValue(file_path, 'r') as f:
         pass
 
 def test_open_write():
-    with VariableValue(file_path, 'w') as f:
+    with booklet.VariableValue(file_path, 'w') as f:
         pass
 
 def test_create_file():
-    with VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
+    with booklet.VariableValue(file_path, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=n_buckets) as f:
         pass
 
 
@@ -225,21 +232,21 @@ chunk_size = 1000
 b2 = b'0' * chunk_size
 n = 1000000
 
-def make_test_file(n):
-    with SqliteDict(file_path, outer_stack=False, flag='n') as f:
-        for i in range(n):
-            f[i] = b2
-        f.commit()
+# def make_test_file(n):
+#     with SqliteDict(file_path, outer_stack=False, flag='n') as f:
+#         for i in range(n):
+#             f[i] = b2
+#         f.commit()
 
-def test_index_speed1(n):
-    with SqliteDict(file_path, outer_stack=False, flag='r') as f:
-        for i in range(n):
-            val = f[i]
+# def test_index_speed1(n):
+#     with SqliteDict(file_path, outer_stack=False, flag='r') as f:
+#         for i in range(n):
+#             val = f[i]
 
-def test_index_speed2(n):
-    with SqliteDict(file_path, outer_stack=False, flag='r') as f:
-        for k, v in f.items():
-            pass
+# def test_index_speed2(n):
+#     with SqliteDict(file_path, outer_stack=False, flag='r') as f:
+#         for k, v in f.items():
+#             pass
 
 
 t1 = time()
@@ -256,185 +263,15 @@ print(time() - t1)
 
 
 
-
-# def test_resize1():
-#     f = io.open(file_path, 'w+b')
-#     f.write(b'0')
-#     f.flush()
-
-#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
-#     f.close()
-
-#     fm.resize(256**5)
-
-#     for i in range(n):
-#         start = i * chunk_size
-#         end = start + chunk_size
-#         # fm.resize(end)
-#         fm[start:end] = b2
-
-#     fm.resize(chunk_size*n)
-
-#     fm.close()
-
-
-# def test_resize2():
-#     f = io.open(file_path, 'w+b')
-#     f.write(b'0')
-#     f.flush()
-
-#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
-#     f.close()
-
-#     # fm.resize(256**5)
-
-#     for i in range(n):
-#         start = i * chunk_size
-#         end = start + chunk_size
-#         fm.resize(end)
-#         fm[start:end] = b2
-#         # fm.flush()
-
-#     # fm.resize(chunk_size*n)
-
-#     fm.close()
-
-
-# def test_write1():
-#     f = io.open(file_path, 'w+b')
-#     for i in range(n):
-#         # start = i * chunk_size
-#         # end = start + chunk_size
-#         f.write(b2)
-
-#     f.close()
-
-
-# def test_write2():
-#     f = io.open(file_path, 'w+b')
-#     f.write(b'0')
-#     f.flush()
-
-#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
-#     f.close()
-
-#     fm.madvise(mmap.MADV_SEQUENTIAL)
-
-#     max_mem = 2**22
-#     mem = 0
-#     for i in range(n):
-#         fm.resize((i+1) * chunk_size)
-#         mem += fm.write(b2)
-#         if mem > max_mem:
-#             fm.madvise(mmap.MADV_DONTNEED)
-#             mem = 0
-
-#     fm.flush()
-#     fm.close()
-
-
-# t1 = time()
-# test_write3()
-# print(time() - t1)
-
-
-# def test_write3():
-#     f = io.open(file_path, 'w+b')
-#     f.write(b'0')
-#     f.flush()
-
-#     fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
-#     # f.close()
-
-#     max_mem = 2**22
-#     mem = 0
-#     for i in range(n):
-#         mem += f.write(b2)
-#         if mem > max_mem:
-#             f.flush()
-#             old_len = len(fm)
-#             fm.resize(old_len + mem)
-#             mem = 0
-
-#     f.close()
-#     fm.close()
-
-
-# def test_read1():
-#     f = io.open(file_path, 'rb')
-#     fm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-#     fm.madvise(mmap.MADV_SEQUENTIAL)
-
-#     max_mem = 2**22
-#     mem = 0
-#     for i in range(n):
-#         data = fm.read(chunk_size)
-#         mem += len(data)
-#         if mem > max_mem:
-#             fm.madvise(mmap.MADV_DONTNEED)
-#             mem = 0
-
-#     fm.close()
-#     f.close()
-
-
-# def test_read2():
-#     f = io.open(file_path, 'rb')
-#     fm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-#     fm.madvise(mmap.MADV_SEQUENTIAL)
-
-#     max_mem = 2**22
-#     mem = 0
-#     for i in range(n):
-#         data = fm.read(chunk_size)
-#         # mem += len(data)
-
-#     fm.madvise(mmap.MADV_DONTNEED)
-#     fm.close()
-#     f.close()
-
-
-# def test_read3():
-#     f = io.open(file_path, 'rb')
-#     for i in range(n):
-#         data = f.read(chunk_size)
-
-#     f.close()
+with booklet.open(file_path1, 'n', key_serializer='uint4', value_serializer=None) as f:
+    for i in range(1000):
+        f[i] = b'0' * 1000000
 
 
 
-# f = io.open(file_path, 'w+b')
-# f.write(b'0123456789')
-# f.flush()
-# fm = mmap.mmap(f.fileno(), 0, mmap.MAP_SHARED)
-# f.seek(1000000001)
-# f.write(b'1234')
-
-# fd = f.fileno()
-# os.copy_file_range(fd, fd, 1000000000, 1000000000, 0)
-
-# f.seek(0)
-
-# f.read(10)
-
-###########
-### Find conflicting buckets for different keys
-s1 = {}
-for i in range(100000):
-    int_bytes = utils.int_to_bytes(i, 4)
-    key_hash = utils.hash_key(int_bytes)
-    mod1 = utils.bytes_to_int(key_hash) % 12007
-    if mod1 in s1:
-        print(i)
-        break
-    else:
-        s1[mod1] = i
-
-
-
-
-
-
+with booklet.open(file_path1) as f:
+    for i, val in f.items():
+        _ = len(val)
 
 
 

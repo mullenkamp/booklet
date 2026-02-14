@@ -14,7 +14,7 @@ import inspect
 from threading import Lock
 import portalocker
 # from fcntl import flock, LOCK_EX, LOCK_SH, LOCK_UN
-# import mmap
+import mmap
 from datetime import datetime, timezone
 import time
 from itertools import count
@@ -300,11 +300,17 @@ def encode_metadata(data):
     return orjson.dumps(data, option=orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY)
 
 
-def close_files(file, n_keys, n_keys_pos, write):
+def close_files(file, n_keys, n_keys_pos, write, mm=None):
     """
     This is to be run as a finalizer to ensure that the files are closed properly.
     First will be to just close the files, I'll need to modify it to sync the index once I write the sync function.
     """
+    if mm is not None:
+        try:
+            mm.close()
+        except Exception:
+            pass
+
     if write:
         file.seek(n_keys_pos)
         file.write(int_to_bytes(n_keys, 4))
@@ -593,6 +599,251 @@ def iter_keys_values(file, n_buckets, include_key, include_value, include_ts, ts
     else:
         # Standard layout: one region
         yield from iter_keys_value_from_start_end_pos(file, first_data_block_pos, file_end, include_key, include_value, include_ts, ts_bytes_len)
+
+
+############################################
+### mmap read functions
+
+
+def mmap_get_value(mm, key_hash, n_buckets, ts_bytes_len=0, index_offset=sub_index_init_pos):
+    """
+    Combined chain traversal and value read using mmap.
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    header_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
+
+    bucket = bytes_to_int(key_hash) % n_buckets
+    bucket_pos = index_offset + bucket * n_bytes_file
+    data_block_pos = bytes_to_int(mm[bucket_pos:bucket_pos + n_bytes_file])
+
+    if data_block_pos > 1:
+        while True:
+            header = mm[data_block_pos:data_block_pos + header_len]
+            next_data_block_pos = bytes_to_int(header[key_hash_len:one_extra_index_bytes_len])
+            if next_data_block_pos:
+                if header[:key_hash_len] == key_hash:
+                    key_len = bytes_to_int(header[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+                    value_len = bytes_to_int(header[one_extra_index_bytes_len + n_bytes_key:])
+                    value_start = data_block_pos + header_len + ts_bytes_len + key_len
+                    return bytes(mm[value_start:value_start + value_len])
+                elif next_data_block_pos == 1:
+                    return False
+            else:
+                return False
+            data_block_pos = next_data_block_pos
+
+    return False
+
+
+def mmap_get_value_ts(mm, key_hash, n_buckets, include_value=True, include_ts=False, ts_bytes_len=0, index_offset=sub_index_init_pos):
+    """
+    Combined chain traversal and value/timestamp read using mmap.
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    header_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
+
+    bucket = bytes_to_int(key_hash) % n_buckets
+    bucket_pos = index_offset + bucket * n_bytes_file
+    data_block_pos = bytes_to_int(mm[bucket_pos:bucket_pos + n_bytes_file])
+
+    if data_block_pos > 1:
+        while True:
+            header = mm[data_block_pos:data_block_pos + header_len]
+            next_data_block_pos = bytes_to_int(header[key_hash_len:one_extra_index_bytes_len])
+            if next_data_block_pos:
+                if header[:key_hash_len] == key_hash:
+                    key_len = bytes_to_int(header[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+                    value_len = bytes_to_int(header[one_extra_index_bytes_len + n_bytes_key:])
+                    payload_start = data_block_pos + header_len
+
+                    if include_value and include_ts:
+                        ts_key_value = mm[payload_start:payload_start + ts_bytes_len + key_len + value_len]
+                        ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
+                        value = bytes(ts_key_value[ts_bytes_len + key_len:])
+                        return value, ts_int
+                    elif include_value:
+                        value_start = payload_start + ts_bytes_len + key_len
+                        return (bytes(mm[value_start:value_start + value_len]), None)
+                    elif include_ts:
+                        return (None, bytes_to_int(mm[payload_start:payload_start + ts_bytes_len]))
+                    else:
+                        raise ValueError('include_value and/or include_timestamp must be True.')
+                elif next_data_block_pos == 1:
+                    return False
+            else:
+                return False
+            data_block_pos = next_data_block_pos
+
+    return False
+
+
+def mmap_contains_key(mm, key_hash, n_buckets, index_offset=sub_index_init_pos):
+    """
+    Determine if a key is present using mmap.
+    """
+    index_len = key_hash_len + n_bytes_file
+
+    bucket = bytes_to_int(key_hash) % n_buckets
+    bucket_pos = index_offset + bucket * n_bytes_file
+    data_block_pos = bytes_to_int(mm[bucket_pos:bucket_pos + n_bytes_file])
+
+    if data_block_pos > 1:
+        while True:
+            data_index = mm[data_block_pos:data_block_pos + index_len]
+            next_data_block_pos = bytes_to_int(data_index[key_hash_len:])
+            if next_data_block_pos:
+                if data_index[:key_hash_len] == key_hash:
+                    return True
+                elif next_data_block_pos == 1:
+                    return False
+            else:
+                return False
+            data_block_pos = next_data_block_pos
+
+    return False
+
+
+def _mmap_iter_keys_values_region(mm, start, end, include_key, include_value, include_ts, ts_bytes_len):
+    """
+    Iterate over variable-length data blocks in a single region using mmap.
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
+
+    next_block_pos = start
+
+    while next_block_pos < end:
+        init_data_block = mm[next_block_pos:next_block_pos + init_data_block_len]
+
+        next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+        key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+        value_len = bytes_to_int(init_data_block[one_extra_index_bytes_len + n_bytes_key:])
+        ts_key_value_len = ts_bytes_len + key_len + value_len
+
+        if next_data_block_pos:  # A value of 0 means it was deleted
+            payload_start = next_block_pos + init_data_block_len
+            ts_key_value = mm[payload_start:payload_start + ts_key_value_len]
+
+            next_block_pos += init_data_block_len + ts_key_value_len
+
+            key = bytes(ts_key_value[ts_bytes_len:ts_bytes_len + key_len])
+            if key != metadata_key_bytes:
+                if include_ts:
+                    ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
+                    if include_value:
+                        value = bytes(ts_key_value[ts_bytes_len + key_len:])
+                        yield key, ts_int, value
+                    else:
+                        yield key, ts_int
+
+                elif include_key and include_value:
+                    value = bytes(ts_key_value[ts_bytes_len + key_len:])
+                    yield key, value
+
+                elif include_key:
+                    yield key
+
+                elif include_value:
+                    value = bytes(ts_key_value[ts_bytes_len + key_len:])
+                    yield value
+                else:
+                    raise ValueError('I need to include something for iter_keys_values.')
+        else:
+            next_block_pos += init_data_block_len + ts_key_value_len
+
+
+def mmap_iter_keys_values(mm, n_buckets, include_key, include_value, include_ts, ts_bytes_len, index_offset=sub_index_init_pos, first_data_block_pos=0):
+    """
+    Iterate over all keys/values using mmap.
+    """
+    mm_len = len(mm)
+
+    if first_data_block_pos == 0:
+        first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+
+    if index_offset != sub_index_init_pos:
+        # Relocated index: scan two regions
+        yield from _mmap_iter_keys_values_region(mm, first_data_block_pos, index_offset, include_key, include_value, include_ts, ts_bytes_len)
+        start2 = index_offset + (n_buckets * n_bytes_file)
+        if start2 < mm_len:
+            yield from _mmap_iter_keys_values_region(mm, start2, mm_len, include_key, include_value, include_ts, ts_bytes_len)
+    else:
+        yield from _mmap_iter_keys_values_region(mm, first_data_block_pos, mm_len, include_key, include_value, include_ts, ts_bytes_len)
+
+
+def mmap_get_value_fixed(mm, key_hash, n_buckets, value_len, index_offset=sub_index_init_pos):
+    """
+    Combined chain traversal and value read for fixed-length values using mmap.
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    header_len = one_extra_index_bytes_len + n_bytes_key
+
+    bucket = bytes_to_int(key_hash) % n_buckets
+    bucket_pos = index_offset + bucket * n_bytes_file
+    data_block_pos = bytes_to_int(mm[bucket_pos:bucket_pos + n_bytes_file])
+
+    if data_block_pos > 1:
+        while True:
+            header = mm[data_block_pos:data_block_pos + header_len]
+            next_data_block_pos = bytes_to_int(header[key_hash_len:one_extra_index_bytes_len])
+            if next_data_block_pos:
+                if header[:key_hash_len] == key_hash:
+                    key_len = bytes_to_int(header[one_extra_index_bytes_len:])
+                    value_start = data_block_pos + header_len + key_len
+                    return bytes(mm[value_start:value_start + value_len])
+                elif next_data_block_pos == 1:
+                    return False
+            else:
+                return False
+            data_block_pos = next_data_block_pos
+
+    return False
+
+
+def _mmap_iter_keys_values_fixed_region(mm, start, end, include_key, include_value, value_len):
+    """
+    Iterate over fixed-length data blocks in a single region using mmap.
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    init_data_block_len = one_extra_index_bytes_len + n_bytes_key
+
+    pos = start
+
+    while pos < end:
+        init_data_block = mm[pos:pos + init_data_block_len]
+        next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+        key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:])
+        payload_start = pos + init_data_block_len
+
+        if next_data_block_pos:  # A value of 0 means it was deleted
+            if include_key and include_value:
+                key_value = mm[payload_start:payload_start + key_len + value_len]
+                yield bytes(key_value[:key_len]), bytes(key_value[key_len:])
+            elif include_key:
+                yield bytes(mm[payload_start:payload_start + key_len])
+            else:
+                value_start = payload_start + key_len
+                yield bytes(mm[value_start:value_start + value_len])
+
+        pos += init_data_block_len + key_len + value_len
+
+
+def mmap_iter_keys_values_fixed(mm, n_buckets, include_key, include_value, value_len, index_offset=sub_index_init_pos, first_data_block_pos=0):
+    """
+    Iterate over all keys/values for fixed-length files using mmap.
+    """
+    mm_len = len(mm)
+
+    if first_data_block_pos == 0:
+        first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+
+    if index_offset != sub_index_init_pos:
+        yield from _mmap_iter_keys_values_fixed_region(mm, first_data_block_pos, index_offset, include_key, include_value, value_len)
+        start2 = index_offset + (n_buckets * n_bytes_file)
+        if start2 < mm_len:
+            yield from _mmap_iter_keys_values_fixed_region(mm, start2, mm_len, include_key, include_value, value_len)
+    else:
+        yield from _mmap_iter_keys_values_fixed_region(mm, first_data_block_pos, mm_len, include_key, include_value, value_len)
 
 
 def assign_delete_flag(file, key_hash, n_buckets, index_offset=sub_index_init_pos):
@@ -1068,8 +1319,16 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
 
             write_init_bucket_indexes(self._file, self._n_buckets, sub_index_init_pos, write_buffer_size)
 
+    ## Create mmap for read-only file mode
+    if not write and is_file:
+        self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
+        if hasattr(self._mmap, 'madvise') and hasattr(mmap, 'MADV_RANDOM'):
+            self._mmap.madvise(mmap.MADV_RANDOM)
+    else:
+        self._mmap = None
+
     ## Create finalizer
-    self._finalizer = weakref.finalize(self, close_files, self._file, n_keys_crash, self._n_keys_pos, self.writable)
+    self._finalizer = weakref.finalize(self, close_files, self._file, n_keys_crash, self._n_keys_pos, self.writable, self._mmap)
 
 
 def copy_file_range(fsrc, fdst, count, offset_src, offset_dst, write_buffer_size):
@@ -1382,8 +1641,16 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
 
             write_init_bucket_indexes(self._file, self._n_buckets, sub_index_init_pos, write_buffer_size)
 
+    ## Create mmap for read-only file mode
+    if not write and is_file:
+        self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
+        if hasattr(self._mmap, 'madvise') and hasattr(mmap, 'MADV_RANDOM'):
+            self._mmap.madvise(mmap.MADV_RANDOM)
+    else:
+        self._mmap = None
+
     ## Create finalizer
-    self._finalizer = weakref.finalize(self, close_files, self._file, n_keys_crash, self._n_keys_pos, self.writable)
+    self._finalizer = weakref.finalize(self, close_files, self._file, n_keys_crash, self._n_keys_pos, self.writable, self._mmap)
 
 
 def read_base_params_fixed(self, base_param_bytes, key_serializer):
