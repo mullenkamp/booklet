@@ -125,6 +125,56 @@ Auto Reindexing
 Booklet now supports (as of version 0.10) automatic reindexing and consequently the user no longer needds to worry about setting an appropriate n_buckets values. When the load factor (number of keys / number of buckets) exceeds 1.0, the booklet will automatically increase the number of buckets and reindex the file to maintain performance. This occurs when the booklet is synced. This ensures that the database remains fast even as it grows beyond the initial `n_buckets` setting.
 
 
+Parallel map
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The ``map`` method applies a function to items in the booklet using multiple worker processes, writing the results back to the same file or to a separate output booklet. This is useful when you have CPU-intensive transformations to apply to many items.
+
+The user function must be a picklable top-level function (not a lambda or closure) with the signature ``func(key, value) -> (new_key, new_value)`` or ``None`` to skip an item.
+
+Transform all values in-place
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. code:: python
+
+  def double_value(key, value):
+      return (key, value * 2)
+
+  with booklet.open('data.blt', 'w') as db:
+      stats = db.map(double_value, n_workers=4)
+      # stats == {'processed': N, 'written': N, 'errors': 0}
+
+Write results to a separate output file
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. code:: python
+
+  def transform(key, value):
+      return (key, expensive_computation(value))
+
+  with booklet.open('input.blt', 'r') as input_db:
+      with booklet.open('output.blt', 'n', value_serializer='pickle', key_serializer='str') as output_db:
+          stats = input_db.map(transform, write_db=output_db, n_workers=8)
+
+Process specific keys only
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. code:: python
+
+  keys_to_process = ['key1', 'key5', 'key10']
+
+  with booklet.open('data.blt', 'w') as db:
+      stats = db.map(my_func, keys=keys_to_process, n_workers=4)
+
+Skip certain items
+^^^^^^^^^^^^^^^^^^
+.. code:: python
+
+  def selective_process(key, value):
+      if value > threshold:
+          return (key, expensive_computation(value))
+      return None  # skip this item
+
+  with booklet.open('data.blt', 'w') as db:
+      stats = db.map(selective_process)
+
+
 Custom serializers
 ~~~~~~~~~~~~~~~~~~
 .. code:: python
