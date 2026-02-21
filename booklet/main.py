@@ -3,6 +3,7 @@
 """
 
 """
+import os
 import io
 import mmap
 import pathlib
@@ -15,10 +16,10 @@ import portalocker
 # from itertools import count
 # from collections import Counter, defaultdict, deque
 import orjson
-# import datetime
-# import time
 import weakref
-# from multiprocessing import Manager, shared_memory
+import multiprocessing
+import threading
+import queue as queue_mod
 
 # try:
 #     import fcntl
@@ -29,6 +30,7 @@ import weakref
 
 # import utils
 from . import utils
+from .parallel import _map_worker, _writer_thread_func, _SENTINEL
 
 # import serializers
 # from . import serializers
@@ -643,6 +645,8 @@ class Booklet(MutableMapping):
         self._check_auto_reindex()
 
     def _check_auto_reindex(self):
+        if self._defer_reindex:
+            return
         # Auto-reindex when load factor > 1.0
         if self._n_keys > self._n_buckets:
             new_n_buckets = utils.get_new_n_buckets(self._n_buckets)
@@ -658,8 +662,141 @@ class Booklet(MutableMapping):
                 self._index_offset = new_index_offset
                 self._first_data_block_pos = new_first_data_block_pos
 
+    def _iter_items_unlocked(self):
+        """
+        Yield (key, value) pairs, acquiring/releasing _thread_lock per block.
+        Used internally by map() to allow interleaved reads and writes.
+        """
+        if self._buffer_index_set:
+            self.sync()
 
+        with self._thread_lock:
+            file_end = self._file.seek(0, 2)
+            n_buckets = self._n_buckets
+            index_offset = self._index_offset
+            first_data_block_pos = self._first_data_block_pos
+            ts_bytes_len = self._ts_bytes_len
 
+        if first_data_block_pos == 0:
+            first_data_block_pos = utils.sub_index_init_pos + (n_buckets * utils.n_bytes_file)
+
+        if index_offset != utils.sub_index_init_pos:
+            regions = [
+                (first_data_block_pos, index_offset),
+                (index_offset + n_buckets * utils.n_bytes_file, file_end),
+            ]
+        else:
+            regions = [(first_data_block_pos, file_end)]
+
+        one_extra_index_bytes_len = utils.key_hash_len + utils.n_bytes_file
+        init_data_block_len = one_extra_index_bytes_len + utils.n_bytes_key + utils.n_bytes_value
+
+        for start, end in regions:
+            pos = start
+            while pos < end:
+                with self._thread_lock:
+                    self._file.seek(pos)
+                    header = self._file.read(init_data_block_len)
+                    next_ptr = utils.bytes_to_int(
+                        header[utils.key_hash_len:one_extra_index_bytes_len]
+                    )
+                    key_len = utils.bytes_to_int(
+                        header[one_extra_index_bytes_len:one_extra_index_bytes_len + utils.n_bytes_key]
+                    )
+                    value_len = utils.bytes_to_int(
+                        header[one_extra_index_bytes_len + utils.n_bytes_key:]
+                    )
+                    ts_key_value_len = ts_bytes_len + key_len + value_len
+
+                    if next_ptr:
+                        payload = self._file.read(ts_key_value_len)
+                        key_bytes = payload[ts_bytes_len:ts_bytes_len + key_len]
+                        value_bytes = payload[ts_bytes_len + key_len:]
+                    else:
+                        key_bytes = None
+                        value_bytes = None
+
+                pos += init_data_block_len + ts_key_value_len
+
+                if key_bytes is not None and key_bytes != utils.metadata_key_bytes:
+                    yield self._post_key(key_bytes), self._post_value(value_bytes)
+
+    def map(self, func, keys=None, write_db=None, n_workers=None):
+        """
+        Apply func to items in parallel using multiprocessing, writing results
+        to this booklet or a separate output booklet.
+
+        Parameters
+        ----------
+        func : callable
+            A picklable function: func(key, value) -> (new_key, new_value) or None.
+            Return a (key, value) tuple to write the result. The output key can
+            differ from the input key. Return None to skip (no write for this item).
+            Must be a top-level function (not a lambda or closure).
+        keys : iterable, optional
+            Specific keys to process. If None, iterates all keys in the booklet.
+        write_db : Booklet, optional
+            A separate writable Booklet to write results to. If None, writes
+            back to this booklet (which must be open for writing).
+        n_workers : int, optional
+            Number of worker processes. Defaults to os.cpu_count().
+
+        Returns
+        -------
+        dict
+            Statistics: {'processed': int, 'written': int, 'errors': int}
+        """
+        output_db = write_db if write_db is not None else self
+        same_file = write_db is None
+
+        if same_file and not self.writable:
+            raise ValueError('File is open for read only. Pass a writable write_db or open in write mode.')
+
+        if write_db is not None and not write_db.writable:
+            raise ValueError('write_db is open for read only.')
+
+        if self._buffer_index_set:
+            self.sync()
+
+        if n_workers is None:
+            n_workers = os.cpu_count() or 4
+
+        if same_file:
+            self._defer_reindex = True
+
+        result_queue = queue_mod.Queue(maxsize=n_workers * 4)
+        done_event = threading.Event()
+        stats = {'processed': 0, 'written': 0, 'errors': 0}
+
+        writer = threading.Thread(
+            target=_writer_thread_func,
+            args=(output_db, result_queue, stats, done_event),
+            daemon=True,
+        )
+        writer.start()
+
+        if keys is not None:
+            item_iter = ((k, self.get(k)) for k in keys)
+        else:
+            item_iter = self._iter_items_unlocked()
+
+        try:
+            with multiprocessing.Pool(processes=n_workers) as pool:
+                work_iter = ((func, k, v) for k, v in item_iter if v is not None)
+                for result in pool.imap_unordered(_map_worker, work_iter):
+                    stats['processed'] += 1
+                    if result is not None:
+                        result_queue.put(result)
+        finally:
+            done_event.set()
+            result_queue.put(_SENTINEL)
+            writer.join(timeout=60)
+
+            if same_file:
+                self._defer_reindex = False
+            output_db.sync()
+
+        return stats
 
 
 #######################################################
@@ -738,6 +875,7 @@ class VariableLengthValue(Booklet):
         init_bytes : bytes, optional
             Initial bytes to write to a new file. Defaults to None.
         """
+        self._defer_reindex = False
         utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)
 
 
@@ -816,6 +954,7 @@ class FixedLengthValue(Booklet):
         init_bytes : bytes, optional
             Initial bytes to write to a new file. Defaults to None.
         """
+        self._defer_reindex = False
         utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, init_bytes)
 
 
@@ -863,6 +1002,55 @@ class FixedLengthValue(Booklet):
             else:
                 for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos):
                     yield self._post_value(value)
+
+    def _iter_items_unlocked(self):
+        if self._buffer_index_set:
+            self.sync()
+
+        with self._thread_lock:
+            file_end = self._file.seek(0, 2)
+            n_buckets = self._n_buckets
+            index_offset = self._index_offset
+            first_data_block_pos = self._first_data_block_pos
+            value_len = self._value_len
+
+        if first_data_block_pos == 0:
+            first_data_block_pos = utils.sub_index_init_pos + (n_buckets * utils.n_bytes_file)
+
+        one_extra_index_bytes_len = utils.key_hash_len + utils.n_bytes_file
+        init_data_block_len = one_extra_index_bytes_len + utils.n_bytes_key
+
+        if index_offset != utils.sub_index_init_pos:
+            regions = [
+                (first_data_block_pos, index_offset),
+                (index_offset + n_buckets * utils.n_bytes_file, file_end),
+            ]
+        else:
+            regions = [(first_data_block_pos, file_end)]
+
+        for start, end in regions:
+            pos = start
+            while pos < end:
+                with self._thread_lock:
+                    self._file.seek(pos)
+                    header = self._file.read(init_data_block_len)
+                    next_ptr = utils.bytes_to_int(
+                        header[utils.key_hash_len:one_extra_index_bytes_len]
+                    )
+                    key_len = utils.bytes_to_int(header[one_extra_index_bytes_len:])
+
+                    if next_ptr:
+                        kv = self._file.read(key_len + value_len)
+                        key_bytes = kv[:key_len]
+                        value_bytes = kv[key_len:]
+                    else:
+                        key_bytes = None
+                        value_bytes = None
+
+                pos += init_data_block_len + key_len + value_len
+
+                if key_bytes is not None:
+                    yield self._post_key(key_bytes), self._post_value(value_bytes)
 
     def get(self, key: Any, default: Any = None) -> Any:
         """
