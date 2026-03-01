@@ -18,8 +18,6 @@ import portalocker
 import orjson
 import weakref
 import multiprocessing
-import threading
-import queue as queue_mod
 
 # try:
 #     import fcntl
@@ -30,7 +28,7 @@ import queue as queue_mod
 
 # import utils
 from . import utils
-from .parallel import _map_worker, _writer_thread_func, _SENTINEL
+from .parallel import _map_worker
 
 # import serializers
 # from . import serializers
@@ -721,82 +719,47 @@ class Booklet(MutableMapping):
                 if key_bytes is not None and key_bytes != utils.metadata_key_bytes:
                     yield self._post_key(key_bytes), self._post_value(value_bytes)
 
-    def map(self, func, keys=None, write_db=None, n_workers=None):
+    def map(self, func, keys=None, n_workers=None):
         """
-        Apply func to items in parallel using multiprocessing, writing results
-        to this booklet or a separate output booklet.
+        Apply func to items in parallel using multiprocessing.
 
         Parameters
         ----------
         func : callable
             A picklable function: func(key, value) -> (new_key, new_value) or None.
-            Return a (key, value) tuple to write the result. The output key can
-            differ from the input key. Return None to skip (no write for this item).
+            Return a (key, value) tuple to yield the result. The output key can
+            differ from the input key. Return None to skip (item not yielded).
             Must be a top-level function (not a lambda or closure).
         keys : iterable, optional
             Specific keys to process. If None, iterates all keys in the booklet.
-        write_db : Booklet, optional
-            A separate writable Booklet to write results to. If None, writes
-            back to this booklet (which must be open for writing).
         n_workers : int, optional
             Number of worker processes. Defaults to os.cpu_count().
 
-        Returns
-        -------
-        dict
-            Statistics: {'processed': int, 'written': int, 'errors': int}
+        Yields
+        ------
+        tuple
+            (key, value) pairs produced by func, as they complete.
         """
-        output_db = write_db if write_db is not None else self
-        same_file = write_db is None
-
-        if same_file and not self.writable:
-            raise ValueError('File is open for read only. Pass a writable write_db or open in write mode.')
-
-        if write_db is not None and not write_db.writable:
-            raise ValueError('write_db is open for read only.')
-
         if self._buffer_index_set:
             self.sync()
 
         if n_workers is None:
             n_workers = os.cpu_count() or 4
 
-        if same_file:
-            self._defer_reindex = True
-
-        result_queue = queue_mod.Queue(maxsize=n_workers * 4)
-        done_event = threading.Event()
-        stats = {'processed': 0, 'written': 0, 'errors': 0}
-
-        writer = threading.Thread(
-            target=_writer_thread_func,
-            args=(output_db, result_queue, stats, done_event),
-            daemon=True,
-        )
-        writer.start()
-
-        if keys is not None:
-            item_iter = ((k, self.get(k)) for k in keys)
-        else:
-            item_iter = self._iter_items_unlocked()
-
+        self._defer_reindex = True
         try:
+            if keys is not None:
+                item_iter = ((k, self.get(k)) for k in keys)
+            else:
+                item_iter = self._iter_items_unlocked()
+
             with multiprocessing.Pool(processes=n_workers) as pool:
                 work_iter = ((func, k, v) for k, v in item_iter if v is not None)
                 for result in pool.imap_unordered(_map_worker, work_iter):
-                    stats['processed'] += 1
                     if result is not None:
-                        result_queue.put(result)
+                        yield result
         finally:
-            done_event.set()
-            result_queue.put(_SENTINEL)
-            writer.join(timeout=60)
-
-            if same_file:
-                self._defer_reindex = False
-            output_db.sync()
-
-        return stats
+            self._defer_reindex = False
 
 
 #######################################################
