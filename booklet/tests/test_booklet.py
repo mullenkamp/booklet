@@ -1085,6 +1085,59 @@ def test_fixed_bytesio_reopen_existing():
     f2.close()
 
 
+def test_init_bytes_resets_index_offset(tmp_path):
+    """init_bytes from a reindexed file should not create an oversized sparse file."""
+    fp1 = tmp_path / 'original.blt'
+    fp2 = tmp_path / 'from_init.blt'
+
+    # n_buckets=3 forces reindex after just a few keys
+    with booklet.open(fp1, 'n', key_serializer='uint4', value_serializer='pickle', n_buckets=3) as f:
+        for i in range(100):
+            f[i] = f'value_{i}'.encode()
+
+    # The original file's index_offset should be large (reindexed to end of file)
+    original_size = fp1.stat().st_size
+
+    # Read init_bytes (first 200 bytes of the reindexed file)
+    with open(fp1, 'rb') as f:
+        init_bytes = f.read(200)
+
+    # Create a new file from init_bytes
+    with booklet.open(fp2, 'n', init_bytes=init_bytes) as f:
+        f[999] = b'hello'
+
+    # The new file should NOT be as large as the original
+    new_size = fp2.stat().st_size
+    assert new_size < original_size, (
+        f'New file from init_bytes is {new_size} bytes, '
+        f'should be much smaller than original {original_size} bytes'
+    )
+
+
+def test_init_bytes_resets_index_offset_fixed(tmp_path):
+    """Same test for FixedLengthValue files."""
+    from booklet import FixedLengthValue
+
+    fp1 = tmp_path / 'original_fixed.blt'
+    fp2 = tmp_path / 'from_init_fixed.blt'
+
+    with FixedLengthValue(fp1, 'n', key_serializer='uint4', value_len=10, n_buckets=3) as f:
+        for i in range(100):
+            f[i] = b'0123456789'
+
+    original_size = fp1.stat().st_size
+
+    with open(fp1, 'rb') as f:
+        init_bytes = f.read(200)
+
+    with FixedLengthValue(fp2, 'n', init_bytes=init_bytes) as f:
+        f[999] = b'0123456789'
+
+    new_size = fp2.stat().st_size
+    assert new_size < original_size, (
+        f'New file from init_bytes is {new_size} bytes, '
+        f'should be much smaller than original {original_size} bytes'
+    )
 
 
 

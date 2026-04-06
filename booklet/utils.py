@@ -1280,6 +1280,13 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             read_base_params_variable(self, init_bytes, key_serializer, value_serializer)
             # 0 out the n_keys
             init_bytes[n_keys_pos:n_keys_pos+4] = int_to_bytes(0, 4)
+
+            # Reset index position so the new file doesn't inherit a large offset
+            # from a reindexed source file (which would create an oversized sparse file)
+            self._index_offset = sub_index_init_pos
+            self._first_data_block_pos = sub_index_init_pos + (self._n_buckets * n_bytes_file)
+            init_bytes[index_offset_pos:index_offset_pos+n_bytes_file] = int_to_bytes(sub_index_init_pos, n_bytes_file)
+            init_bytes[first_data_block_pos_pos:first_data_block_pos_pos+n_bytes_file] = int_to_bytes(self._first_data_block_pos, n_bytes_file)
         else:
             file_timestamp = make_timestamp_int()
 
@@ -1604,6 +1611,13 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
             read_base_params_fixed(self, init_bytes, key_serializer)
             # 0 out the n_keys
             init_bytes[n_keys_pos:n_keys_pos+4] = int_to_bytes(0, 4)
+
+            # Reset index position so the new file doesn't inherit a large offset
+            # from a reindexed source file (which would create an oversized sparse file)
+            self._index_offset = sub_index_init_pos
+            self._first_data_block_pos = sub_index_init_pos + (self._n_buckets * n_bytes_file)
+            init_bytes[index_offset_pos:index_offset_pos+n_bytes_file] = int_to_bytes(sub_index_init_pos, n_bytes_file)
+            init_bytes[first_data_block_pos_pos:first_data_block_pos_pos+n_bytes_file] = int_to_bytes(self._first_data_block_pos, n_bytes_file)
         else:
             if value_len is None:
                 raise ValueError('value_len must be an int > 0.')
