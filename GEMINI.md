@@ -14,32 +14,22 @@
 
 ## Building and Running
 
-The project recommends using **[uv](https://docs.astral.sh/uv/)** for dependency management and running development commands, though standard `pip` and `pytest` are also supported (as seen in CI).
+The project uses **[uv](https://docs.astral.sh/uv/)** for dependency management and running development commands.
 
 ### Setup
 Ensure you have Python 3.10+ installed.
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-# OR using uv
+# Install dependencies and create the environment
 uv sync
 ```
 
 ### Testing
-Run the test suite using `uv run pytest`:
+Run the test suite with uv:
 
 ```bash
-# Standard
-uv run pytest
-
-# With coverage
-coverage run -m pytest tests
-coverage report
-
-# Using uv
-uv run pytest
-uv run cov
+uv run test          # Run pytest
+uv run cov           # Run tests with a coverage report
 ```
 
 ### Building
@@ -76,4 +66,5 @@ uv run lint:all           # Run all lint checks
 *   **Entry Point:** `booklet.open()` in `booklet/main.py` is the primary factory function.
 *   **Core Logic:** `booklet/utils.py` handles low-level file I/O, hashing (Blake2s), and binary format management.
 *   **Serializers:** Defined in `booklet/serializers.py`. New built-in serializers must be appended to the end of the registry to maintain integer code compatibility.
-*   **File Format:** `.blt` files consist of a Header (metadata/params), Bucket Index (hash table), and Data Blocks (linked list of entries).
+*   **File Format:** `.blt` files consist of a 200-byte Header (metadata/params, including the `index_offset` / `first_data_block_pos` layout fields), a Bucket Index (hash table of chain heads), and Data Blocks (per-bucket linked lists of entries; deletes/overwrites tombstone the old block). The index has two supported layouts, chosen at read time from the header: **standard** (index before the data, `index_offset == 200`) and **relocated** (index written *after* the data, `index_offset > 200`, with two data regions) — the relocated form is produced by auto-reindex and by `prune()`.
+*   **Prune / Compaction:** `prune()` reclaims tombstoned/overwritten (and optionally old-timestamp) blocks by compacting the file **in place, streaming** live blocks toward byte 200 — peak memory is bounded by `write_buffer_size`, not the file size (a 24 GB file prunes at ~150 MB RSS). Its normal (non-empty) output is the relocated layout.

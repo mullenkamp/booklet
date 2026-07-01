@@ -1056,16 +1056,18 @@ def prune_file(file, timestamp, n_buckets, n_bytes_file, n_bytes_key, n_bytes_va
     else:
         read_regions = [(first_data_block_pos, file_len)]
 
-    # Always write index at byte 200 and data after it
-    data_block_write_start_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
-
-    # Phase 1: Read all live blocks into memory
-    live_blocks = []
+    ## Pass 1: compact the live data blocks in place, streaming toward a write cursor that starts at
+    ## byte 200 (over the now-dead old index / already-read data). Because data always begins at
+    ## first_data_block_pos > 200 and reindex never lowers it, and because each block is read fully
+    ## before its live bytes are buffered, the write region stays strictly below the read cursor in
+    ## every layout (standard and relocated) -- no unread bytes are ever clobbered. Peak memory is
+    ## bounded by write_buffer_size + O(one value); the whole dataset is never held in RAM.
+    write_pos = sub_index_init_pos
     removed_count = 0
     for region_start, region_end in read_regions:
-        data_block_read_start_pos = region_start
-        while data_block_read_start_pos < region_end:
-            file.seek(data_block_read_start_pos)
+        read_pos = region_start
+        while read_pos < region_end:
+            file.seek(read_pos)
             init_data_block = file.read(init_data_block_len)
 
             next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
@@ -1076,72 +1078,103 @@ def prune_file(file, timestamp, n_buckets, n_bytes_file, n_bytes_key, n_bytes_va
             value_len_bytes = init_data_block[one_extra_index_bytes_len + n_bytes_key:]
             value_len = bytes_to_int(value_len_bytes)
             ts_key_value_len = ts_bytes_len + key_len + value_len
-            if next_data_block_pos: # A value of 0 means it was deleted
+
+            if next_data_block_pos:  # A value of 0 means it was deleted
                 ts_key_value_bytes = file.read(ts_key_value_len)
 
                 key_hash = init_data_block[:key_hash_len]
 
-                # Check if it's the metadata key - remove from n_keys at the end
+                keep = True
                 if key_hash == metadata_key_hash:
+                    # Keep the metadata key regardless of the timestamp filter; subtract it from n_keys later.
                     metadata_key_added = True
-                    live_blocks.append((key_hash, key_len_bytes, value_len_bytes, ts_key_value_bytes))
-
-                # timestamp filter - don't remove metadata even if older
                 elif timestamp and ts_bytes_len:
                     ts_int = bytes_to_int(ts_key_value_bytes[:ts_bytes_len])
                     if ts_int < timestamp:
-                        data_block_read_start_pos += init_data_block_len + ts_key_value_len
-                        removed_count += 1
-                        continue
-                    live_blocks.append((key_hash, key_len_bytes, value_len_bytes, ts_key_value_bytes))
+                        keep = False
+
+                if keep:
+                    # Reconstruct the block with a fresh end-of-chain next-pointer (1); Pass 2 relinks the
+                    # bucket chains. Copying the stale next-pointer would corrupt the rebuilt index. The
+                    # reconstructed block is exactly as long as the original, so its length is known without
+                    # building it; extend the buffer with the small header then the payload to avoid a second
+                    # full-value copy.
+                    write_len = init_data_block_len + ts_key_value_len
+                    if write_len > write_buffer_size - len(buffer_data):
+                        write_pos = flush_data_buffer(file, buffer_data, write_pos)
+                    buffer_data.extend(key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + value_len_bytes)
+                    buffer_data.extend(ts_key_value_bytes)
                 else:
-                    live_blocks.append((key_hash, key_len_bytes, value_len_bytes, ts_key_value_bytes))
+                    removed_count += 1
             else:
                 removed_count += 1
 
-            data_block_read_start_pos += init_data_block_len + ts_key_value_len
+            read_pos += init_data_block_len + ts_key_value_len
 
-    # Phase 2: Clear bucket indexes and write all live blocks
-    write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
+    ## Flush any remaining live data. write_pos is now L: the end of the compacted data region.
+    write_pos = flush_data_buffer(file, buffer_data, write_pos)
+    live_data_end = write_pos
 
-    n_keys = 0
-    for key_hash, key_len_bytes, value_len_bytes, ts_key_value_bytes in live_blocks:
-        write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + value_len_bytes + ts_key_value_bytes
+    if live_data_end > sub_index_init_pos:
+        ## Non-empty: place the fresh bucket index right after the compacted data (relocated layout).
+        new_index_offset = live_data_end
+        write_init_bucket_indexes(file, n_buckets, new_index_offset, write_buffer_size)
 
-        ## flush write buffer if the size is getting too large
-        write_len = len(write_bytes)
-        bd_pos = len(buffer_data)
+        ## Pass 2: rebuild the bucket index by streaming the compacted data region [200, L). Only block
+        ## headers are read here; update_index writes the bucket pointers at new_index_offset and relinks
+        ## each block's next-pointer chain, staying bounded by write_buffer_size.
+        n_keys = 0
+        read_pos = sub_index_init_pos
+        while read_pos < live_data_end:
+            file.seek(read_pos)  # update_index moves the file pointer, so re-seek every iteration
+            init_data_block = file.read(init_data_block_len)
 
-        bd_space = write_buffer_size - bd_pos
-        if write_len > bd_space:
-            data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-            n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
-            bd_pos = 0
+            key_hash = init_data_block[:key_hash_len]
+            key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+            value_len = bytes_to_int(init_data_block[one_extra_index_bytes_len + n_bytes_key:])
+            block_len = init_data_block_len + ts_bytes_len + key_len + value_len
 
-        ## Append to buffers
-        data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
+            buffer_index.extend(key_hash + int_to_bytes(read_pos, n_bytes_file))
+            buffer_index_set.add(key_hash)
+            if len(buffer_index) >= write_buffer_size:
+                n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets, new_index_offset)
 
-        buffer_index.extend(key_hash + data_pos_bytes)
-        buffer_data.extend(write_bytes)
+            read_pos += block_len
 
-    ## Finish writing if there's data left in buffer
-    if buffer_data:
-        data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
+        if buffer_index:
+            n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets, new_index_offset)
 
-    os.ftruncate(file.fileno(), data_block_write_start_pos)
+        os.ftruncate(file.fileno(), new_index_offset + (n_buckets * n_bytes_file))
+        os.fsync(file.fileno())
+
+        ## Record the relocated layout in the header: index at L, data starting at byte 200.
+        file.seek(index_offset_pos)
+        file.write(int_to_bytes(new_index_offset, n_bytes_file))
+        file.seek(first_data_block_pos_pos)
+        file.write(int_to_bytes(sub_index_init_pos, n_bytes_file))
+    else:
+        ## Empty: no live blocks remain. Emit the standard cleared-empty layout (as clear() does): a fresh
+        ## bucket index at byte 200 with the 0/0 sentinels, so readers recompute first_data_block_pos and
+        ## never misread the byte-200 index as data.
+        new_index_offset = 0
+        write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
+        os.ftruncate(file.fileno(), sub_index_init_pos + (n_buckets * n_bytes_file))
+        os.fsync(file.fileno())
+
+        file.seek(index_offset_pos)
+        file.write(int_to_bytes(0, n_bytes_file))
+        file.seek(first_data_block_pos_pos)
+        file.write(int_to_bytes(0, n_bytes_file))
+        n_keys = 0
+
+    ## Make the finalized layout header durable together with the already-fsync'd data + index, so a crash
+    ## right after prune() can't leave a stale header pointing past the truncated EOF.
     os.fsync(file.fileno())
-
-    ## Reset index_offset and first_data_block_pos in header
-    file.seek(index_offset_pos)
-    file.write(int_to_bytes(0, n_bytes_file))
-    file.seek(first_data_block_pos_pos)
-    file.write(int_to_bytes(0, n_bytes_file))
 
     if metadata_key_added:
         n_keys -= 1
 
-    return n_keys, removed_count
+    return n_keys, removed_count, new_index_offset
 
 
 # def open_file(file_path, flag):
@@ -1253,6 +1286,11 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
                self._ts_bytes_len = 0
             else:
                 raise ValueError('File is an older version.')
+
+        # The crash-recovery rebuild below calls self.keys(), which checks self._mmap; set it now so a
+        # write-mode reopen of an uncleanly-closed file doesn't raise AttributeError (the read-mode mmap
+        # is still created further down and overrides this).
+        self._mmap = None
 
         ## Check the n_keys
         if self._n_keys == n_keys_crash:
@@ -1583,6 +1621,11 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
 
         ## Read the rest of the base parameters
         read_base_params_fixed(self, base_param_bytes, key_serializer)
+
+        # The crash-recovery rebuild below calls self.keys(), which checks self._mmap; set it now so a
+        # write-mode reopen of an uncleanly-closed file doesn't raise AttributeError (the read-mode mmap
+        # is still created further down and overrides this).
+        self._mmap = None
 
         ## Check the n_keys
         if self._n_keys == n_keys_crash:
@@ -1950,16 +1993,14 @@ def prune_file_fixed(file, n_buckets, n_bytes_file, n_bytes_key, value_len, writ
     else:
         read_regions = [(first_data_block_pos, file_len)]
 
-    # Always write index at byte 200 and data after it
-    data_block_write_start_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
-
-    # Phase 1: Read all live blocks into memory
-    live_blocks = []
+    ## Pass 1: compact the live data blocks in place (see prune_file for the write<=read invariant that
+    ## makes this safe). Peak memory is write_buffer_size + one block.
+    write_pos = sub_index_init_pos
     removed_count = 0
     for region_start, region_end in read_regions:
-        data_block_read_start_pos = region_start
-        while data_block_read_start_pos < region_end:
-            file.seek(data_block_read_start_pos)
+        read_pos = region_start
+        while read_pos < region_end:
+            file.seek(read_pos)
             init_data_block = file.read(init_data_block_len)
 
             next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
@@ -1968,62 +2009,85 @@ def prune_file_fixed(file, n_buckets, n_bytes_file, n_bytes_key, value_len, writ
             key_len = bytes_to_int(key_len_bytes)
 
             key_value_len = key_len + value_len
-            if next_data_block_pos: # A value of 0 means it was deleted
+            if next_data_block_pos:  # A value of 0 means it was deleted
                 key_value_bytes = file.read(key_value_len)
 
                 key_hash = init_data_block[:key_hash_len]
 
-                # Check if it's the metadata key - remove from n_keys at the end
                 if key_hash == metadata_key_hash:
                     metadata_key_added = True
 
-                live_blocks.append((key_hash, key_len_bytes, key_value_bytes))
+                # Reconstruct with a fresh end-of-chain next-pointer (1); Pass 2 relinks chains. Length is
+                # known without building the block; extend header then payload to avoid a second value copy.
+                write_len = init_data_block_len + key_value_len
+                if write_len > write_buffer_size - len(buffer_data):
+                    write_pos = flush_data_buffer(file, buffer_data, write_pos)
+                buffer_data.extend(key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes)
+                buffer_data.extend(key_value_bytes)
             else:
                 removed_count += 1
 
-            data_block_read_start_pos += init_data_block_len + key_value_len
+            read_pos += init_data_block_len + key_value_len
 
-    # Phase 2: Clear bucket indexes and write all live blocks
-    write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
+    ## Flush any remaining live data. write_pos is now L: the end of the compacted data region.
+    write_pos = flush_data_buffer(file, buffer_data, write_pos)
+    live_data_end = write_pos
 
-    n_keys = 0
-    for key_hash, key_len_bytes, key_value_bytes in live_blocks:
-        write_bytes = key_hash + b'\x01\x00\x00\x00\x00\x00' + key_len_bytes + key_value_bytes
+    if live_data_end > sub_index_init_pos:
+        ## Non-empty: place the fresh bucket index right after the compacted data (relocated layout).
+        new_index_offset = live_data_end
+        write_init_bucket_indexes(file, n_buckets, new_index_offset, write_buffer_size)
 
-        ## flush write buffer if the size is getting too large
-        write_len = len(write_bytes)
-        bd_pos = len(buffer_data)
+        ## Pass 2: rebuild the bucket index by streaming the compacted data region [200, L).
+        n_keys = 0
+        read_pos = sub_index_init_pos
+        while read_pos < live_data_end:
+            file.seek(read_pos)  # update_index moves the file pointer, so re-seek every iteration
+            init_data_block = file.read(init_data_block_len)
 
-        bd_space = write_buffer_size - bd_pos
-        if write_len > bd_space:
-            data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-            n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
-            bd_pos = 0
+            key_hash = init_data_block[:key_hash_len]
+            key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+            block_len = init_data_block_len + key_len + value_len
 
-        ## Append to buffers
-        data_pos_bytes = int_to_bytes(data_block_write_start_pos + bd_pos, n_bytes_file)
+            buffer_index.extend(key_hash + int_to_bytes(read_pos, n_bytes_file))
+            buffer_index_set.add(key_hash)
+            if len(buffer_index) >= write_buffer_size:
+                n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets, new_index_offset)
 
-        buffer_index.extend(key_hash + data_pos_bytes)
-        buffer_data.extend(write_bytes)
+            read_pos += block_len
 
-    ## Finish writing if there's data left in buffer
-    if buffer_data:
-        data_block_write_start_pos = flush_data_buffer(file, buffer_data, data_block_write_start_pos)
-        n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets)
+        if buffer_index:
+            n_keys += update_index(file, buffer_index, buffer_index_set, n_buckets, new_index_offset)
 
-    os.ftruncate(file.fileno(), data_block_write_start_pos)
+        os.ftruncate(file.fileno(), new_index_offset + (n_buckets * n_bytes_file))
+        os.fsync(file.fileno())
+
+        ## Record the relocated layout in the header: index at L, data starting at byte 200.
+        file.seek(index_offset_pos)
+        file.write(int_to_bytes(new_index_offset, n_bytes_file))
+        file.seek(first_data_block_pos_pos)
+        file.write(int_to_bytes(sub_index_init_pos, n_bytes_file))
+    else:
+        ## Empty: no live blocks remain. Emit the standard cleared-empty layout (0/0 sentinels).
+        new_index_offset = 0
+        write_init_bucket_indexes(file, n_buckets, sub_index_init_pos, write_buffer_size)
+        os.ftruncate(file.fileno(), sub_index_init_pos + (n_buckets * n_bytes_file))
+        os.fsync(file.fileno())
+
+        file.seek(index_offset_pos)
+        file.write(int_to_bytes(0, n_bytes_file))
+        file.seek(first_data_block_pos_pos)
+        file.write(int_to_bytes(0, n_bytes_file))
+        n_keys = 0
+
+    ## Make the finalized layout header durable together with the already-fsync'd data + index, so a crash
+    ## right after prune() can't leave a stale header pointing past the truncated EOF.
     os.fsync(file.fileno())
-
-    ## Reset index_offset and first_data_block_pos in header
-    file.seek(index_offset_pos)
-    file.write(int_to_bytes(0, n_bytes_file))
-    file.seek(first_data_block_pos_pos)
-    file.write(int_to_bytes(0, n_bytes_file))
 
     if metadata_key_added:
         n_keys -= 1
 
-    return n_keys, removed_count
+    return n_keys, removed_count, new_index_offset
 
 
 

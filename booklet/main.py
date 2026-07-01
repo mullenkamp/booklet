@@ -483,14 +483,19 @@ class Booklet(MutableMapping):
         if self.writable:
 
             with self._thread_lock:
-                n_keys, removed_count = utils.prune_file(self._file, timestamp, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
+                n_keys, removed_count, new_index_offset = utils.prune_file(self._file, timestamp, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
                 self._n_keys = n_keys
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
 
-                # Reset layout after prune (index always written at byte 200)
-                self._index_offset = utils.sub_index_init_pos
-                self._first_data_block_pos = utils.sub_index_init_pos + (self._n_buckets * utils.n_bytes_file)
+                # Mirror the post-prune layout written by prune_file: non-empty -> relocated index (data
+                # at byte 200, index at new_index_offset); empty -> standard cleared layout.
+                if new_index_offset:
+                    self._index_offset = new_index_offset
+                    self._first_data_block_pos = utils.sub_index_init_pos
+                else:
+                    self._index_offset = utils.sub_index_init_pos
+                    self._first_data_block_pos = utils.sub_index_init_pos + (self._n_buckets * utils.n_bytes_file)
 
                 self._file.flush()
 
@@ -1086,14 +1091,19 @@ class FixedLengthValue(Booklet):
 
         if self.writable:
             with self._thread_lock:
-                n_keys, removed_count = utils.prune_file_fixed(self._file, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
+                n_keys, removed_count, new_index_offset = utils.prune_file_fixed(self._file, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
                 self._n_keys = n_keys
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
 
-                # Reset layout after prune (index always written at byte 200)
-                self._index_offset = utils.sub_index_init_pos
-                self._first_data_block_pos = utils.sub_index_init_pos + (self._n_buckets * utils.n_bytes_file)
+                # Mirror the post-prune layout written by prune_file_fixed: non-empty -> relocated index
+                # (data at byte 200, index at new_index_offset); empty -> standard cleared layout.
+                if new_index_offset:
+                    self._index_offset = new_index_offset
+                    self._first_data_block_pos = utils.sub_index_init_pos
+                else:
+                    self._index_offset = utils.sub_index_init_pos
+                    self._first_data_block_pos = utils.sub_index_init_pos + (self._n_buckets * utils.n_bytes_file)
 
                 self._file.flush()
 

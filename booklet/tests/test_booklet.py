@@ -8,6 +8,7 @@ Created on Sun Mar 10 13:55:17 2024
 import pytest
 import io
 import os
+import tracemalloc
 import booklet
 from booklet import __version__, FixedLengthValue, VariableLengthValue, utils
 from tempfile import NamedTemporaryFile
@@ -1138,6 +1139,280 @@ def test_init_bytes_resets_index_offset_fixed(tmp_path):
         f'New file from init_bytes is {new_size} bytes, '
         f'should be much smaller than original {original_size} bytes'
     )
+
+
+###########################################################
+### In-place streaming prune (bounded-memory rewrite)
+#
+# These tests are self-contained (own temp files, own 'n' opens) so they don't depend on the
+# ordering-sensitive shared-state tests above. They exercise the two-pass in-place prune: round-trip +
+# on-disk shrink, dataset-independent (bounded) memory, the relocated-index input layout, the
+# empty-after-prune layout, and the crash-recovery _mmap ordering fix.
+
+
+def test_prune_inplace_roundtrip_variable(tmp_path):
+    fp = tmp_path / 'prune_rt_var.blt'
+    n = 300
+    live = {i: (f'{i:08d}'.encode() * 128) for i in range(n)}  # ~1 KB values
+
+    with booklet.open(fp, 'n', key_serializer='uint4', value_serializer=None) as f:
+        for k, v in live.items():
+            f[k] = v
+        f.sync()
+        # Overwrite every key -> the original blocks become dead space to reclaim.
+        for k in list(live):
+            live[k] = (f'{k:08d}zz'.encode() * 128)
+            f[k] = live[k]
+
+    old_size = fp.stat().st_size
+
+    with booklet.open(fp, 'w') as f:
+        old_len = len(f)
+        removed = f.prune()
+        new_len = len(f)
+        # Every key must round-trip immediately after prune (same open handle, relocated layout).
+        for k, v in live.items():
+            assert f[k] == v
+        assert f._index_offset != utils.sub_index_init_pos  # relocated: index sits after the data
+
+    new_size = fp.stat().st_size
+    assert removed > 0
+    assert old_len == n and new_len == n
+    assert new_size < old_size
+
+    # Reopen (re-parses the header) and re-verify; a second prune has nothing to reclaim.
+    with booklet.open(fp, 'w') as f:
+        assert len(f) == n
+        for k, v in live.items():
+            assert f[k] == v
+        assert f.prune() == 0
+        assert len(f) == n
+
+
+def test_prune_inplace_roundtrip_fixed(tmp_path):
+    fp = tmp_path / 'prune_rt_fixed.blt'
+    n = 300
+    vlen = 16
+    live = {i: f'{i:016d}'.encode() for i in range(n)}
+
+    with FixedLengthValue(fp, 'n', key_serializer='uint4', value_len=vlen) as f:
+        for k, v in live.items():
+            f[k] = v
+        f.sync()
+        for k in list(live):
+            live[k] = f'{k + 500000:016d}'.encode()
+            f[k] = live[k]
+
+    old_size = fp.stat().st_size
+
+    with FixedLengthValue(fp, 'w') as f:
+        old_len = len(f)
+        removed = f.prune()
+        new_len = len(f)
+        for k, v in live.items():
+            assert f[k] == v
+        assert f._index_offset != utils.sub_index_init_pos
+
+    new_size = fp.stat().st_size
+    assert removed > 0
+    assert old_len == n and new_len == n
+    assert new_size < old_size
+
+    with FixedLengthValue(fp, 'w') as f:
+        assert len(f) == n
+        for k, v in live.items():
+            assert f[k] == v
+        assert f.prune() == 0
+        assert len(f) == n
+
+
+def _build_overwrite_and_prune(fp, n, val_size, buffer_size):
+    """Build a booklet of n keys, overwrite them all (creating n dead blocks), then prune while
+    tracing memory. write_buffer_size must be passed on the prune-time open too -- it's a runtime
+    parameter, not persisted in the file. Returns (peak_bytes, live_dict)."""
+    live = {}
+    with booklet.open(fp, 'n', key_serializer='uint4', value_serializer=None, buffer_size=buffer_size) as f:
+        for i in range(n):
+            f[i] = bytes([i % 251]) * val_size
+        f.sync()
+        for i in range(n):
+            v = bytes([(i + 7) % 251]) * val_size
+            live[i] = v
+            f[i] = v
+
+    with booklet.open(fp, 'w', buffer_size=buffer_size) as f:
+        tracemalloc.start()
+        tracemalloc.reset_peak()
+        removed = f.prune()
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        assert removed == n
+        for k, v in live.items():  # data intact after the bounded prune
+            assert f[k] == v
+
+    return peak, live
+
+
+def test_prune_bounded_memory(tmp_path):
+    """Peak Python memory during prune must track write_buffer_size, NOT the dataset size.
+
+    Regresses the old 'read all live blocks into a list' behaviour, which peaked at ~file size. Prove
+    dataset-independence by pruning a small and a 4x-larger dataset with the SAME small write buffer:
+    both peaks stay bounded by the buffer (a few blocks), rather than scaling with the data.
+    """
+    val_size = 8192  # 8 KB per value
+    buffer_size = 64 * 1024  # 64 KB write buffer
+    ceiling = buffer_size + 8 * val_size  # buffer + a handful of transient blocks
+
+    peak_small, live_small = _build_overwrite_and_prune(tmp_path / 'mem_small.blt', 200, val_size, buffer_size)
+    peak_big, live_big = _build_overwrite_and_prune(tmp_path / 'mem_big.blt', 800, val_size, buffer_size)
+
+    small_bytes = 200 * val_size
+    big_bytes = 800 * val_size  # ~6.5 MB live; old behaviour would peak here
+
+    # Bounded by the write buffer, and essentially flat as the dataset grows 4x.
+    assert peak_small < ceiling, f'small peak {peak_small} exceeds buffer ceiling {ceiling}'
+    assert peak_big < ceiling, f'big peak {peak_big} exceeds buffer ceiling {ceiling}'
+    assert peak_big < big_bytes // 4, f'big peak {peak_big} scales with dataset {big_bytes}'
+    assert peak_big < peak_small * 2, f'peak grew with data: {peak_small} -> {peak_big}'
+
+
+@pytest.mark.parametrize('fixed', [False, True])
+def test_prune_relocated_index(tmp_path, fixed):
+    """Prune must handle a relocated-index INPUT layout (produced by auto-reindex)."""
+    fp = tmp_path / 'prune_reloc.blt'
+    n = 200
+    if fixed:
+        live = {i: f'{i:012d}'.encode() for i in range(n)}
+        opener_w = lambda: FixedLengthValue(fp, 'w')
+
+        def opener_n():
+            return FixedLengthValue(fp, 'n', key_serializer='uint4', value_len=12, n_buckets=12)
+    else:
+        live = {i: (f'{i:08d}'.encode() * 32) for i in range(n)}
+        opener_w = lambda: booklet.open(fp, 'w')
+
+        def opener_n():
+            return booklet.open(fp, 'n', key_serializer='uint4', value_serializer=None, n_buckets=12)
+
+    # n_buckets=12 with 200 keys forces at least one auto-reindex -> relocated index on close.
+    with opener_n() as f:
+        for k, v in live.items():
+            f[k] = v
+
+    with opener_w() as f:
+        assert f._index_offset != utils.sub_index_init_pos  # confirm relocated input
+        for k in range(0, n, 3):  # delete a third to create dead space
+            del f[k]
+            live.pop(k, None)
+
+    old_size = fp.stat().st_size
+
+    with opener_w() as f:
+        assert f._index_offset != utils.sub_index_init_pos
+        removed = f.prune()
+        assert removed > 0
+        assert len(f) == len(live)
+        for k, v in live.items():
+            assert f[k] == v
+
+    assert fp.stat().st_size < old_size
+
+    # Reopen and re-verify integrity through the post-prune (relocated) header, and confirm new writes
+    # append correctly into the relocated layout.
+    with opener_w() as f:
+        assert len(f) == len(live)
+        for k, v in live.items():
+            assert f[k] == v
+        assert set(f.keys()) == set(live)
+        assert f.prune() == 0
+        new = {900001: live[next(iter(live))], 900002: live[max(live)]}
+        for k, v in new.items():
+            f[k] = v
+        for k, v in {**live, **new}.items():
+            assert f[k] == v
+
+
+@pytest.mark.parametrize('fixed', [False, True])
+def test_prune_empty_after_delete(tmp_path, fixed):
+    """Deleting every key then pruning yields the standard cleared-empty layout, reusable afterwards."""
+    fp = tmp_path / 'prune_empty.blt'
+    keys = list(range(50))
+    if fixed:
+        opener_w = lambda: FixedLengthValue(fp, 'w')
+        mkval = lambda k: f'{k:08d}'.encode()
+
+        def opener_n():
+            return FixedLengthValue(fp, 'n', key_serializer='uint4', value_len=8)
+    else:
+        opener_w = lambda: booklet.open(fp, 'w')
+        mkval = lambda k: f'val{k}'.encode()
+
+        def opener_n():
+            return booklet.open(fp, 'n', key_serializer='uint4', value_serializer=None)
+
+    with opener_n() as f:
+        for k in keys:
+            f[k] = mkval(k)
+
+    with opener_w() as f:
+        for k in keys:
+            del f[k]
+        removed = f.prune()
+        assert removed > 0
+        assert len(f) == 0
+        assert list(f.keys()) == []
+        # Standard empty layout: index back at byte 200.
+        assert f._index_offset == utils.sub_index_init_pos
+
+    # Reopen: iterates clean and accepts new writes.
+    with opener_w() as f:
+        assert len(f) == 0
+        assert list(f.keys()) == []
+        f[999] = mkval(999)
+        assert f[999] == mkval(999)
+
+    with opener_w() as f:
+        assert len(f) == 1
+        assert f[999] == mkval(999)
+
+
+@pytest.mark.parametrize('fixed', [False, True])
+def test_reopen_uncleanly_closed_write(tmp_path, fixed):
+    """A file left with n_keys == n_keys_crash (unclean close) reopens in write mode without an
+    AttributeError on _mmap, rebuilds n_keys, and can still be pruned."""
+    fp = tmp_path / 'prune_crash.blt'
+    n = 40
+    if fixed:
+        opener_w = lambda: FixedLengthValue(fp, 'w')
+        mkval = lambda k: f'{k:08d}'.encode()
+
+        def opener_n():
+            return FixedLengthValue(fp, 'n', key_serializer='uint4', value_len=8)
+    else:
+        opener_w = lambda: booklet.open(fp, 'w')
+        mkval = lambda k: f'val{k}'.encode()
+
+        def opener_n():
+            return booklet.open(fp, 'n', key_serializer='uint4', value_serializer=None)
+
+    with opener_n() as f:
+        for k in range(n):
+            f[k] = mkval(k)
+
+    # Simulate an unclean close: stamp the crash sentinel into the n_keys header field.
+    with open(fp, 'r+b') as raw:
+        raw.seek(utils.n_keys_pos)
+        raw.write(utils.int_to_bytes(utils.n_keys_crash, 4))
+
+    # Reopen in write mode -> must NOT raise AttributeError('_mmap'); n_keys is rebuilt via keys().
+    with opener_w() as f:
+        assert len(f) == n
+        for k in range(n):
+            assert f[k] == mkval(k)
+        # And prune still works on the recovered file.
+        assert f.prune() == 0
+        assert len(f) == n
 
 
 

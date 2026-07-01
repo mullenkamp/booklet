@@ -48,11 +48,19 @@ The version is defined in `booklet/__init__.py` and read by uv dynamically.
 ### Binary File Format
 
 The `.blt` file has three regions:
-1. **Sub-index header** (first 200 bytes) — UUID identifying file type (variable vs fixed), version, serializer codes, n_buckets, n_keys, timestamps flag, file UUID
+1. **Sub-index header** (first 200 bytes) — UUID identifying file type (variable vs fixed), version, serializer codes, n_buckets, n_keys, timestamps flag, file UUID, and the layout fields `index_offset` / `first_data_block_pos` (see "Layout" below)
 2. **Bucket index** — `n_buckets` entries of 6 bytes each, pointing to first data block for that bucket
 3. **Data blocks** — Sequential blocks containing: key hash (13 bytes, blake2s), next block pointer (6 bytes), key length (2 bytes), value length (4 bytes, variable only), timestamp (7 bytes if enabled), key bytes, value bytes
 
 Key lookup: hash key → modulus n_buckets → read bucket → follow chain of data blocks comparing key hashes. Deletes set next-block-pointer to 0 (tombstone). Overwrites append new block and tombstone old one.
+
+**Layout — standard vs relocated index.** The bucket index is *not* always in region 2. When the live key count outgrows `n_buckets` (auto-reindex) or after `prune()`, the index is rewritten *after* the data and its offset recorded in the header. Both states are fully supported and selected at read time from the header:
+- **Standard** (`index_offset == 200`, `first_data_block_pos == 0` sentinels): index in region 2, a single data region after it.
+- **Relocated** (`index_offset > 200`): data starts at byte 200 and the index sits at `index_offset`; readers scan **two** data regions — `[first_data_block_pos, index_offset)` and `[index_offset + n_buckets*6, EOF)`.
+
+### Prune / compaction
+
+`prune()` reclaims tombstoned/overwritten (and optionally old-timestamp) blocks. It compacts **in place and streaming**: live blocks are moved down toward byte 200 while the file is read forward, so peak memory is bounded by `write_buffer_size` (+ one value), never the file size — pruning a 24 GB file peaks at ~150 MB RSS. The rebuilt bucket index is written *after* the compacted data, so **a non-empty prune's normal output is the relocated layout above** (an all-empty result resets to the standard cleared layout). `Booklet.prune()` returns the count of removed items.
 
 ### Serializer System
 
