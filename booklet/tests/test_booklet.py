@@ -9,6 +9,7 @@ import pytest
 import io
 import os
 import tracemalloc
+from datetime import datetime, timezone
 import booklet
 from booklet import __version__, FixedLengthValue, VariableLengthValue, utils
 from tempfile import NamedTemporaryFile
@@ -267,6 +268,29 @@ def test_prune(file_path):
         meta = f.get_metadata()
 
     assert (old_len == removed_items) and (new_len == 0) and isinstance(meta, dict)
+
+
+def test_prune_timestamp_datetime_and_str():
+    """
+    prune's timestamp parameter accepts the documented datetime and ISO-string
+    forms, not only int microseconds (regression: prune_file compared the raw
+    value against int timestamps and raised TypeError for datetime/str).
+    """
+    tf = NamedTemporaryFile()
+
+    with booklet.open(tf.name, 'n', key_serializer='uint4', value_serializer='pickle', init_timestamps=True) as f:
+        for key, value in data_dict.items():
+            f[key] = value
+
+    with booklet.open(tf.name, 'w') as f:
+        old_len = len(f)
+        removed_items = f.prune(timestamp=datetime.now(timezone.utc))
+        assert (removed_items == old_len) and (len(f) == 0)
+
+        for key, value in data_dict.items():
+            f[key] = value
+        removed_items = f.prune(timestamp=datetime.now(timezone.utc).isoformat())
+        assert (removed_items == len(data_dict)) and (len(f) == 0)
 
 
 @pytest.mark.parametrize("file_path", [file_path1, file_path2])

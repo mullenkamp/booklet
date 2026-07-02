@@ -482,6 +482,13 @@ class Booklet(MutableMapping):
 
         if self.writable:
 
+            ## Normalize to int microseconds - prune_file compares raw int
+            ## timestamps, so the documented str/datetime forms must be converted
+            ## here. None means "no timestamp filter" and must stay None (a
+            ## make_timestamp_int(None) would mean "now" and evict everything).
+            if timestamp is not None:
+                timestamp = utils.make_timestamp_int(timestamp)
+
             with self._thread_lock:
                 n_keys, removed_count, new_index_offset = utils.prune_file(self._file, timestamp, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
                 self._n_keys = n_keys
