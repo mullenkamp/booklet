@@ -933,6 +933,21 @@ class FixedLengthValue(Booklet):
         utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, init_bytes)
 
 
+    def set_metadata(self, data: Any, timestamp: Optional[Union[int, str, datetime]] = None):
+        """
+        Not supported on fixed-length booklets.
+        """
+        # The base-class metadata write goes through the variable-length block
+        # writer, whose framing (per-entry value length) fixed-stride iteration
+        # cannot parse - a single metadata write silently corrupts keys()/items()
+        # for the whole file. Fail loud instead.
+        raise NotImplementedError(
+            'Metadata is not supported on fixed-length booklets: the metadata write '
+            'path would corrupt fixed-stride iteration. Use a variable-length booklet '
+            'if you need metadata.'
+        )
+
+
     def keys(self) -> Iterator[Any]:
         """
         Return an iterator over the booklet's keys.

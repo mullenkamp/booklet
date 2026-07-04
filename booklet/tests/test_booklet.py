@@ -1448,3 +1448,24 @@ def test_reopen_uncleanly_closed_write(tmp_path, fixed):
 
 
 
+
+
+def test_fixed_length_set_metadata_raises():
+    """
+    Regression (found live 2026-07-03 via ebooklet): the base-class metadata write
+    uses variable-length framing, which silently corrupts fixed-stride iteration.
+    FixedLengthValue must refuse metadata writes loudly; reads stay harmless.
+    """
+    tf = NamedTemporaryFile()
+    with FixedLengthValue(tf.name, 'n', key_serializer='str', value_len=8) as f:
+        f['key1'] = b'12345678'
+
+        with pytest.raises(NotImplementedError):
+            f.set_metadata({'some': 'meta'})
+
+        assert f.get_metadata() is None
+
+    # the refused write must not have touched the file: iteration stays intact
+    with FixedLengthValue(tf.name) as f:
+        assert list(f.keys()) == ['key1']
+        assert f['key1'] == b'12345678'
