@@ -6,6 +6,8 @@ Introduction
 Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. Booklet uses the `MutableMapping <https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes>`_ class API which is the same as python's dictionary in addition to some `dbm <https://docs.python.org/3/library/dbm.html>`_ methods (i.e. sync and prune).
 It is thread-safe on reads and writes (using thread locks) and multiprocessing-safe (using file locks).
 
+Changes between releases are tracked in `CHANGELOG.md <CHANGELOG.md>`_.
+
 When an error occurs (e.g. trying to access a key that doesn't exist), booklet will properly close the file and remove the file locks. This will not sync any changes, so the user will lose any changes that were not synced. There will be circumstances that can occur that will not properly close the file, so care still needs to be made.
 
 Installation
@@ -79,6 +81,18 @@ Read data without using the context manager
   db.close()
 
 
+Iteration semantics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+As of version 0.12.6, iteration follows python dict semantics. Reads are allowed while iterating — the natural idiom works:
+
+.. code:: python
+
+  with booklet.open('test.blt') as db:
+    for key in db.keys():
+      value = db[key]
+
+Any mutation of the booklet while an iterator is open (set/update/del/set_metadata/prune/clear) makes the iterator raise RuntimeError at its next step — including overwriting an *existing* key, which a plain dict would allow (an overwrite appends a new data block that the scan walks). Collect the keys into a list first if you need to write while walking. The one exception is set_timestamp, which writes in place and is allowed during iteration. The map method has its own semantics: plain writes are allowed while a map runs; only prune/clear invalidate it.
+
 Prune deleted items
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 When a key/value is "deleted", it's actually just flagged internally as deleted and the item is ignored on the following requests. This is the same for keys that get reassigned. To remove these deleted items from the file completely, the user can run the "prune" method. This should only be performed when the user has done a ton of deletes/overwrites as prune can be computationally intensive. There is no performance improvement to removing these items from the file. It's purely to regain space.
@@ -123,6 +137,56 @@ Timestamps associated with each assigned item have been implemented, but can be 
 Auto Reindexing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Booklet now supports (as of version 0.10) automatic reindexing and consequently the user no longer needds to worry about setting an appropriate n_buckets values. When the load factor (number of keys / number of buckets) exceeds 1.0, the booklet will automatically increase the number of buckets and reindex the file to maintain performance. This occurs when the booklet is synced. This ensures that the database remains fast even as it grows beyond the initial `n_buckets` setting.
+
+
+Parallel map
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The ``map`` method applies a function to items in the booklet using multiple worker processes, writing the results back to the same file or to a separate output booklet. This is useful when you have CPU-intensive transformations to apply to many items.
+
+The user function must be a picklable top-level function (not a lambda or closure) with the signature ``func(key, value) -> (new_key, new_value)`` or ``None`` to skip an item.
+
+Transform all values in-place
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. code:: python
+
+  def double_value(key, value):
+      return (key, value * 2)
+
+  with booklet.open('data.blt', 'w') as db:
+      stats = db.map(double_value, n_workers=4)
+      # stats == {'processed': N, 'written': N, 'errors': 0}
+
+Write results to a separate output file
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. code:: python
+
+  def transform(key, value):
+      return (key, expensive_computation(value))
+
+  with booklet.open('input.blt', 'r') as input_db:
+      with booklet.open('output.blt', 'n', value_serializer='pickle', key_serializer='str') as output_db:
+          stats = input_db.map(transform, write_db=output_db, n_workers=8)
+
+Process specific keys only
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. code:: python
+
+  keys_to_process = ['key1', 'key5', 'key10']
+
+  with booklet.open('data.blt', 'w') as db:
+      stats = db.map(my_func, keys=keys_to_process, n_workers=4)
+
+Skip certain items
+^^^^^^^^^^^^^^^^^^
+.. code:: python
+
+  def selective_process(key, value):
+      if value > threshold:
+          return (key, expensive_computation(value))
+      return None  # skip this item
+
+  with booklet.open('data.blt', 'w') as db:
+      stats = db.map(selective_process)
 
 
 Custom serializers

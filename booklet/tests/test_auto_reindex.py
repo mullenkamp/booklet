@@ -59,11 +59,14 @@ def test_auto_reindex_fixed(db_path):
             assert db[f'key_{i}'] == b'0' * value_len
 
 
-def test_prune_resets_index_layout(db_path):
-    """After auto-reindex, prune should reset the index back to byte 200."""
+def test_prune_relocates_index_layout(db_path):
+    """The in-place prune compacts data to byte 200 and places the index AFTER it (relocated layout);
+    it never moves the index back to byte 200 when live data remains (that would require reading the
+    whole dataset into RAM). first_data_block_pos becomes 200 and the file stays fully readable."""
     n_buckets = 10
+    n = n_buckets + 2
     with booklet.open(db_path, 'n', n_buckets=n_buckets, key_serializer='str', value_serializer='str', buffer_size=512) as db:
-        for i in range(n_buckets + 2):
+        for i in range(n):
             db[f'key_{i}'] = f'value_{i}'
 
         db.sync()
@@ -73,12 +76,19 @@ def test_prune_resets_index_layout(db_path):
 
         db.prune()
 
-        # After prune, index should be back at byte 200
-        assert db._index_offset == utils.sub_index_init_pos
-        assert db._first_data_block_pos == utils.sub_index_init_pos + (db._n_buckets * utils.n_bytes_file)
+        # After the in-place prune, data lives at byte 200 and the index sits right after it.
+        assert db._first_data_block_pos == utils.sub_index_init_pos
+        assert db._index_offset > utils.sub_index_init_pos
 
         # Data should still be accessible
-        for i in range(n_buckets + 1):
+        for i in range(n):
+            assert db[f'key_{i}'] == f'value_{i}'
+
+    # Reopen (re-parses the relocated header) and re-verify.
+    with booklet.open(db_path, 'r') as db:
+        assert db._first_data_block_pos == utils.sub_index_init_pos
+        assert db._index_offset > utils.sub_index_init_pos
+        for i in range(n):
             assert db[f'key_{i}'] == f'value_{i}'
 
 
