@@ -73,6 +73,10 @@ Serializers are classes with static `dumps(obj) -> bytes` and `loads(bytes) -> o
 - Write buffering: writes accumulate in `_buffer_data`/`_buffer_index` bytearrays, flushed when buffer exceeds `write_buffer_size` or on `sync()`/`close()`
 - `weakref.finalize` ensures cleanup (unlock + close) even if user forgets to close
 
+### Iteration Contract (0.12.6+)
+
+`keys()`/`items()`/`values()`/`timestamps()` use **per-step locking** via `Booklet._iter_locked`: each step's seek+read runs under `_thread_lock`, the lock is released before every yield, so interleaved same-instance reads (`get`, `[]`, `in`, nested iterators) are safe during iteration (pre-0.12.6 they deadlocked — the generators held the lock across yields). A per-instance `_mutation_count` (bumped by every layout-mutating op: set/update/del/set_metadata/prune/clear/auto-reindex) is snapshotted at iterator start and checked each step — any mutation mid-iteration raises `RuntimeError('booklet mutated during iteration')`. This *includes* overwriting an existing key (an overwrite appends a block that the scan walks); `set_timestamp` is the one write allowed during iteration (in-place, no layout change). Invariants when touching this code: every bump is a *bare* `+= 1` inside the same lock block as the layout write (never its own `with` — reindex bumps run with the lock already held); underlying `utils` region iterators must keep their cursor in **local state** and re-seek (or slice the mmap positionlessly) every step — never carry state in the shared file position across yields. `map()`/`_iter_items_unlocked` sit outside this contract: plain writes are allowed while a map runs (`_defer_reindex`); only `prune()`/`clear()` invalidate it (a separate `_compaction_count` raises `RuntimeError`). Two `Booklet` instances sharing one `BytesIO` bypass portalocker and have independent locks/counters — unsupported.
+
 ### File Open Flags
 
 Standard dbm convention: `'r'` (read-only, default), `'w'` (read-write existing), `'c'` (read-write, create if missing), `'n'` (always create new).

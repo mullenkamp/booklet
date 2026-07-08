@@ -61,8 +61,11 @@ class Booklet(MutableMapping):
         ts_int = utils.make_timestamp_int(timestamp)
         ts_int_bytes = utils.int_to_bytes(ts_int, utils.timestamp_bytes_len)
 
-        self._file.seek(utils.file_timestamp_pos)
-        self._file.write(ts_int_bytes)
+        # Moves the shared file position, so it must hold the lock like every
+        # other position-mover (no mutation bump - layout-safe header write).
+        with self._thread_lock:
+            self._file.seek(utils.file_timestamp_pos)
+            self._file.write(ts_int_bytes)
 
         self._file_timestamp = ts_int
 
@@ -90,6 +93,7 @@ class Booklet(MutableMapping):
         if self.writable:
             self.sync()
             with self._thread_lock:
+                self._mutation_count += 1
                 _ = utils.write_data_blocks(self._file,  utils.metadata_key_bytes, utils.encode_metadata(data), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len, self._index_offset)
                 if self._buffer_index:
                     utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
@@ -162,50 +166,101 @@ class Booklet(MutableMapping):
 
         return value
 
-    def keys(self) -> Iterator[Any]:
+    def _iter_locked(self, make_iter) -> Iterator[Any]:
         """
-        Return an iterator over the booklet's keys.
+        Advance a utils iterator one step at a time under _thread_lock,
+        releasing the lock before every yield.
+
+        This is what makes interleaved same-instance reads (get, [], in,
+        nested iterators) safe during iteration: each step's seek+read runs
+        under the lock, but the lock is never held while control is with the
+        caller. The underlying iterators keep their cursor in local state and
+        re-seek (or slice positionlessly) every step, so other lock-holders
+        may move the shared file position between steps.
+
+        A snapshot of _mutation_count guards the scan: any layout mutation
+        while iteration is in progress raises RuntimeError at the next step
+        instead of silently corrupting it. make_iter is called under the lock
+        (after the pre-sync), so it captures post-sync/post-reindex layout
+        offsets.
+
+        Note: two Booklet instances sharing one BytesIO buffer bypass
+        portalocker and have independent locks/counters - that configuration
+        is unsupported.
         """
         if self._buffer_index_set:
             self.sync()
 
         with self._thread_lock:
-            if self._mmap is not None:
-                for key in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_key(key)
-            else:
-                for key in utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_key(key)
+            mut0 = self._mutation_count
+            it = make_iter()
+
+        while True:
+            with self._thread_lock:
+                if self._mutation_count != mut0:
+                    raise RuntimeError('booklet mutated during iteration')
+                try:
+                    item = next(it)
+                except StopIteration:
+                    return
+            yield item
+
+    def keys(self) -> Iterator[Any]:
+        """
+        Return an iterator over the booklet's keys.
+
+        Reads (get, [], in, nested iterators) are allowed while iterating.
+        Any mutation (set/update/del/set_metadata/prune/clear, or an
+        auto-reindex they trigger) invalidates open iterators, which raise
+        RuntimeError at their next step. Unlike a plain dict this includes
+        overwriting an EXISTING key (an overwrite appends a new data block
+        that the scan walks). set_timestamp is the only write allowed during
+        iteration; otherwise collect the keys into a list first. map() sits
+        outside this guarantee (see its docstring).
+        """
+        if self._mmap is not None:
+            def make_iter():
+                return utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+        else:
+            def make_iter():
+                return utils.iter_keys_values(self._file, self._n_buckets, True, False, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+
+        for key in self._iter_locked(make_iter):
+            yield self._post_key(key)
 
     def items(self) -> Iterator[Tuple[Any, Any]]:
         """
         Return an iterator over the booklet's (key, value) pairs.
-        """
-        if self._buffer_index_set:
-            self.sync()
 
-        with self._thread_lock:
-            if self._mmap is not None:
-                for key, value in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_key(key), self._post_value(value)
-            else:
-                for key, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_key(key), self._post_value(value)
+        Same iteration semantics as keys(): interleaved reads are allowed,
+        any mutation raises RuntimeError at the next step.
+        """
+        if self._mmap is not None:
+            def make_iter():
+                return utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+        else:
+            def make_iter():
+                return utils.iter_keys_values(self._file, self._n_buckets, True, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+
+        for key, value in self._iter_locked(make_iter):
+            yield self._post_key(key), self._post_value(value)
 
     def values(self) -> Iterator[Any]:
         """
         Return an iterator over the booklet's values.
-        """
-        if self._buffer_index_set:
-            self.sync()
 
-        with self._thread_lock:
-            if self._mmap is not None:
-                for value in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_value(value)
-            else:
-                for value in utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_value(value)
+        Same iteration semantics as keys(): interleaved reads are allowed,
+        any mutation raises RuntimeError at the next step.
+        """
+        if self._mmap is not None:
+            def make_iter():
+                return utils.mmap_iter_keys_values(self._mmap, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+        else:
+            def make_iter():
+                return utils.iter_keys_values(self._file, self._n_buckets, False, True, False, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+
+        for value in self._iter_locked(make_iter):
+            yield self._post_value(value)
 
     def timestamps(self, include_value: bool = False, decode_value: bool = True) -> Iterator[Union[Tuple[Any, int], Tuple[Any, int, Any]]]:
         """
@@ -224,30 +279,29 @@ class Booklet(MutableMapping):
         tuple
             If include_value is False: (key, timestamp)
             If include_value is True: (key, timestamp, value)
+
+        Notes
+        -----
+        Same iteration semantics as keys(), with one addition: set_timestamp
+        writes in place, so `for key, ts in b.timestamps(): b.set_timestamp(...)`
+        is a supported pattern.
         """
         if self._init_timestamps:
-            if self._buffer_index_set:
-                self.sync()
+            if self._mmap is not None:
+                def make_iter():
+                    return utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, include_value, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+            else:
+                def make_iter():
+                    return utils.iter_keys_values(self._file, self._n_buckets, True, include_value, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
 
-            with self._thread_lock:
-                if self._mmap is not None:
-                    if include_value:
-                        for key, ts_int, value in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, True, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                            if decode_value:
-                                value = self._post_value(value)
-                            yield self._post_key(key), ts_int, value
-                    else:
-                        for key, ts_int in utils.mmap_iter_keys_values(self._mmap, self._n_buckets, True, False, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                            yield self._post_key(key), ts_int
-                else:
-                    if include_value:
-                        for key, ts_int, value in utils.iter_keys_values(self._file, self._n_buckets, True, True, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                            if decode_value:
-                                value = self._post_value(value)
-                            yield self._post_key(key), ts_int, value
-                    else:
-                        for key, ts_int in utils.iter_keys_values(self._file, self._n_buckets, True, False, True, self._ts_bytes_len, self._index_offset, self._first_data_block_pos):
-                            yield self._post_key(key), ts_int
+            if include_value:
+                for key, ts_int, value in self._iter_locked(make_iter):
+                    if decode_value:
+                        value = self._post_value(value)
+                    yield self._post_key(key), ts_int, value
+            else:
+                for key, ts_int in self._iter_locked(make_iter):
+                    yield self._post_key(key), ts_int
         else:
             raise ValueError('timestamps were not initialized with this file.')
 
@@ -398,6 +452,11 @@ class Booklet(MutableMapping):
                 key_bytes = self._pre_key(key)
                 key_hash = utils.hash_key(key_bytes)
 
+                ## Normalize to int microseconds - utils.set_timestamp writes the
+                ## raw int, so the documented str/datetime forms must be converted
+                ## here (same boundary as prune()).
+                timestamp = utils.make_timestamp_int(timestamp)
+
                 with self._thread_lock:
                     success = utils.set_timestamp(self._file, key_hash, self._n_buckets, timestamp, self._index_offset)
 
@@ -432,6 +491,7 @@ class Booklet(MutableMapping):
             elif not isinstance(value, bytes):
                 raise TypeError('If encode_value is False, then value must be a bytes object.')
             with self._thread_lock:
+                self._mutation_count += 1
                 n_extra_keys = utils.write_data_blocks(self._file,  self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len, self._index_offset)
                 self._n_keys += n_extra_keys
                 # self._check_auto_reindex()
@@ -450,6 +510,7 @@ class Booklet(MutableMapping):
         """
         if self.writable:
             with self._thread_lock:
+                self._mutation_count += 1
                 for key, value in key_value.items():
                     n_extra_keys = utils.write_data_blocks(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, None, self._ts_bytes_len, self._index_offset)
                     self._n_keys += n_extra_keys
@@ -490,6 +551,8 @@ class Booklet(MutableMapping):
                 timestamp = utils.make_timestamp_int(timestamp)
 
             with self._thread_lock:
+                self._mutation_count += 1
+                self._compaction_count += 1
                 n_keys, removed_count, new_index_offset = utils.prune_file(self._file, timestamp, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
                 self._n_keys = n_keys
                 self._file.seek(self._n_keys_pos)
@@ -546,6 +609,7 @@ class Booklet(MutableMapping):
             with self._thread_lock:
                 del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets, self._index_offset)
                 if del_bool:
+                    self._mutation_count += 1
                     self._n_keys -= 1
                     self._file.seek(self._n_keys_pos)
                     self._file.write(utils.int_to_bytes(self._n_keys, 4))
@@ -566,6 +630,8 @@ class Booklet(MutableMapping):
         """
         if self.writable:
             with self._thread_lock:
+                self._mutation_count += 1
+                self._compaction_count += 1
                 utils.clear(self._file, self._n_buckets, self._n_keys_pos, self._write_buffer_size)
                 self._n_keys = 0
                 self._index_offset = utils.sub_index_init_pos
@@ -661,6 +727,9 @@ class Booklet(MutableMapping):
         if self._n_keys > self._n_buckets:
             new_n_buckets = utils.get_new_n_buckets(self._n_buckets)
             if new_n_buckets is not None:
+                # Bare increment - the caller (sync/_sync_index) already holds
+                # the non-reentrant lock; taking it again would self-deadlock.
+                self._mutation_count += 1
                 fixed_value_len = getattr(self, '_value_len', None)
                 new_index_offset, new_first_data_block_pos = utils.reindex(
                     self._file, self._n_buckets, new_n_buckets,
@@ -681,6 +750,7 @@ class Booklet(MutableMapping):
             self.sync()
 
         with self._thread_lock:
+            comp0 = self._compaction_count
             file_end = self._file.seek(0, 2)
             n_buckets = self._n_buckets
             index_offset = self._index_offset
@@ -705,6 +775,8 @@ class Booklet(MutableMapping):
             pos = start
             while pos < end:
                 with self._thread_lock:
+                    if self._compaction_count != comp0:
+                        raise RuntimeError('booklet compacted (prune/clear) during map() iteration')
                     self._file.seek(pos)
                     header = self._file.read(init_data_block_len)
                     next_ptr = utils.bytes_to_int(
@@ -751,6 +823,13 @@ class Booklet(MutableMapping):
         ------
         tuple
             (key, value) pairs produced by func, as they complete.
+
+        Notes
+        -----
+        map() sits outside the mutation-during-iteration guarantee that
+        keys()/items()/values() provide: plain writes (set/del) ARE allowed
+        while a map() is running (auto-reindex is deferred for its duration).
+        Only prune()/clear() invalidate a running map(), raising RuntimeError.
         """
         if self._buffer_index_set:
             self.sync()
@@ -948,56 +1027,112 @@ class FixedLengthValue(Booklet):
         )
 
 
+    def _pre_value(self, value: Any) -> bytes:
+        # Fixed-stride iteration derives every block boundary from value_len -
+        # a value of any other length silently corrupts the whole scan, so
+        # validate centrally for every write entry point that serializes.
+        value = super()._pre_value(value)
+        if len(value) != self._value_len:
+            raise ValueError(f'Value must serialize to exactly {self._value_len} bytes, got {len(value)}.')
+        return value
+
+
+    def set(self, key: Any, value: Any, timestamp: Optional[Union[int, str, datetime]] = None, encode_value: bool = True):
+        """
+        Set a key/value pair.
+
+        Parameters
+        ----------
+        key : any
+            The key to set.
+        value : any
+            The value to set. It must serialize to exactly value_len bytes.
+        timestamp : None
+            Fixed-length booklets do not support per-key timestamps; anything
+            other than None raises ValueError.
+        encode_value : bool, optional
+            Whether to encode the value using the value_serializer.
+            Defaults to True. If False, value must be bytes.
+        """
+        # The inherited Booklet.set writes variable-length framing (a value_len
+        # field + optional timestamp bytes) that fixed-stride iteration cannot
+        # parse - it would silently corrupt the file (same family as the
+        # set_metadata guard above).
+        if self.writable:
+            if timestamp is not None:
+                raise ValueError('Fixed-length booklets do not support timestamps.')
+            if encode_value:
+                value = self._pre_value(value)
+            else:
+                if not isinstance(value, bytes):
+                    raise TypeError('If encode_value is False, then value must be a bytes object.')
+                if len(value) != self._value_len:
+                    raise ValueError(f'Value must be exactly {self._value_len} bytes, got {len(value)}.')
+            with self._thread_lock:
+                self._mutation_count += 1
+                n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), value, self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, self._index_offset)
+                self._n_keys += n_extra_keys
+        else:
+            raise ValueError('File is open for read only.')
+
+
     def keys(self) -> Iterator[Any]:
         """
         Return an iterator over the booklet's keys.
-        """
-        if self._buffer_index_set:
-            self.sync()
 
-        with self._thread_lock:
-            if self._mmap is not None:
-                for key in utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_key(key)
-            else:
-                for key in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_key(key)
+        Same iteration semantics as the variable-length class: interleaved
+        reads are allowed, any mutation raises RuntimeError at the next step.
+        """
+        if self._mmap is not None:
+            def make_iter():
+                return utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos)
+        else:
+            def make_iter():
+                return utils.iter_keys_values_fixed(self._file, self._n_buckets, True, False, self._value_len, self._index_offset, self._first_data_block_pos)
+
+        for key in self._iter_locked(make_iter):
+            yield self._post_key(key)
 
     def items(self) -> Iterator[Tuple[Any, Any]]:
         """
         Return an iterator over the booklet's (key, value) pairs.
-        """
-        if self._buffer_index_set:
-            self.sync()
 
-        with self._thread_lock:
-            if self._mmap is not None:
-                for key, value in utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_key(key), self._post_value(value)
-            else:
-                for key, value in utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_key(key), self._post_value(value)
+        Same iteration semantics as the variable-length class: interleaved
+        reads are allowed, any mutation raises RuntimeError at the next step.
+        """
+        if self._mmap is not None:
+            def make_iter():
+                return utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos)
+        else:
+            def make_iter():
+                return utils.iter_keys_values_fixed(self._file, self._n_buckets, True, True, self._value_len, self._index_offset, self._first_data_block_pos)
+
+        for key, value in self._iter_locked(make_iter):
+            yield self._post_key(key), self._post_value(value)
 
     def values(self) -> Iterator[Any]:
         """
         Return an iterator over the booklet's values.
-        """
-        if self._buffer_index_set:
-            self.sync()
 
-        with self._thread_lock:
-            if self._mmap is not None:
-                for value in utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_value(value)
-            else:
-                for value in utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos):
-                    yield self._post_value(value)
+        Same iteration semantics as the variable-length class: interleaved
+        reads are allowed, any mutation raises RuntimeError at the next step.
+        """
+        if self._mmap is not None:
+            def make_iter():
+                return utils.mmap_iter_keys_values_fixed(self._mmap, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos)
+        else:
+            def make_iter():
+                return utils.iter_keys_values_fixed(self._file, self._n_buckets, False, True, self._value_len, self._index_offset, self._first_data_block_pos)
+
+        for value in self._iter_locked(make_iter):
+            yield self._post_value(value)
 
     def _iter_items_unlocked(self):
         if self._buffer_index_set:
             self.sync()
 
         with self._thread_lock:
+            comp0 = self._compaction_count
             file_end = self._file.seek(0, 2)
             n_buckets = self._n_buckets
             index_offset = self._index_offset
@@ -1022,6 +1157,8 @@ class FixedLengthValue(Booklet):
             pos = start
             while pos < end:
                 with self._thread_lock:
+                    if self._compaction_count != comp0:
+                        raise RuntimeError('booklet compacted (prune/clear) during map() iteration')
                     self._file.seek(pos)
                     header = self._file.read(init_data_block_len)
                     next_ptr = utils.bytes_to_int(
@@ -1089,6 +1226,7 @@ class FixedLengthValue(Booklet):
         """
         if self.writable:
             with self._thread_lock:
+                self._mutation_count += 1
                 for key, value in key_value_dict.items():
                     n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, self._index_offset)
                     self._n_keys += n_extra_keys
@@ -1113,6 +1251,8 @@ class FixedLengthValue(Booklet):
 
         if self.writable:
             with self._thread_lock:
+                self._mutation_count += 1
+                self._compaction_count += 1
                 n_keys, removed_count, new_index_offset = utils.prune_file_fixed(self._file, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._value_len, self._write_buffer_size, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
                 self._n_keys = n_keys
                 self._file.seek(self._n_keys_pos)
@@ -1150,13 +1290,9 @@ class FixedLengthValue(Booklet):
         """
         Set key to value.
         """
-        if self.writable:
-            with self._thread_lock:
-                n_extra_keys = utils.write_data_blocks_fixed(self._file, self._pre_key(key), self._pre_value(value), self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, self._index_offset)
-                self._n_keys += n_extra_keys
-
-        else:
-            raise ValueError('File is open for read only.')
+        # Delegates to the fixed-framing set() above (which validates the
+        # value length and bumps the mutation counter).
+        self.set(key, value)
 
 
 #####################################################

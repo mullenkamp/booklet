@@ -1248,6 +1248,12 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
     self._buffer_index_set = set()
 
     self._thread_lock = Lock()
+    # Incremented (under _thread_lock) by every layout-mutating operation; open
+    # iterators snapshot it and raise RuntimeError when it changes mid-iteration.
+    self._mutation_count = 0
+    # Incremented only by prune()/clear() (compactions relocate data blocks);
+    # checked by _iter_items_unlocked, which must tolerate plain writes.
+    self._compaction_count = 0
     self._is_file = is_file
 
     if fp_exists:
@@ -1588,6 +1594,12 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
     self._buffer_index_set = set()
 
     self._thread_lock = Lock()
+    # Incremented (under _thread_lock) by every layout-mutating operation; open
+    # iterators snapshot it and raise RuntimeError when it changes mid-iteration.
+    self._mutation_count = 0
+    # Incremented only by prune()/clear() (compactions relocate data blocks);
+    # checked by _iter_items_unlocked, which must tolerate plain writes.
+    self._compaction_count = 0
     self._is_file = is_file
 
     if fp_exists:
@@ -1842,35 +1854,34 @@ def get_value_fixed(file, key_hash, n_buckets, value_len, index_offset=sub_index
 def _iter_keys_values_fixed_region(file, start, end, include_key, include_value, value_len):
     """
     Iterate over fixed-length data blocks in a single region [start, end).
+
+    Keeps its cursor in a local position and re-seeks at the start of every
+    step, so the shared file position may be moved between yields (e.g. by an
+    interleaved get() under per-step locking) without corrupting the scan.
     """
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
     init_data_block_len = one_extra_index_bytes_len + n_bytes_key
 
-    file.seek(start)
+    pos = start
 
-    while file.tell() < end:
+    while pos < end:
+        file.seek(pos)
         init_data_block = file.read(init_data_block_len)
         next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
         key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:])
+
         if next_data_block_pos: # A value of 0 means it was deleted
+            key_value = file.read(key_len + value_len)
+            pos += init_data_block_len + key_len + value_len
+
             if include_key and include_value:
-                key_value = file.read(key_len + value_len)
-                key = key_value[:key_len]
-                value = key_value[key_len:]
-                yield key, value
-
+                yield key_value[:key_len], key_value[key_len:]
             elif include_key:
-                key = file.read(key_len)
-                yield key
-                file.seek(value_len, 1)
-
+                yield key_value[:key_len]
             else:
-                file.seek(key_len, 1)
-                value = file.read(value_len)
-                yield value
-
+                yield key_value[key_len:]
         else:
-            file.seek(key_len + value_len, 1)
+            pos += init_data_block_len + key_len + value_len
 
 
 def iter_keys_values_fixed(file, n_buckets, include_key, include_value, value_len, index_offset=sub_index_init_pos, first_data_block_pos=0):

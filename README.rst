@@ -6,6 +6,8 @@ Introduction
 Booklet is a pure python key-value file database. It allows for multiple serializers for both the keys and values. Booklet uses the `MutableMapping <https://docs.python.org/3/library/collections.abc.html#collections-abstract-base-classes>`_ class API which is the same as python's dictionary in addition to some `dbm <https://docs.python.org/3/library/dbm.html>`_ methods (i.e. sync and prune).
 It is thread-safe on reads and writes (using thread locks) and multiprocessing-safe (using file locks).
 
+Changes between releases are tracked in `CHANGELOG.md <CHANGELOG.md>`_.
+
 When an error occurs (e.g. trying to access a key that doesn't exist), booklet will properly close the file and remove the file locks. This will not sync any changes, so the user will lose any changes that were not synced. There will be circumstances that can occur that will not properly close the file, so care still needs to be made.
 
 Installation
@@ -78,6 +80,18 @@ Read data without using the context manager
 
   db.close()
 
+
+Iteration semantics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+As of version 0.12.6, iteration follows python dict semantics. Reads are allowed while iterating — the natural idiom works:
+
+.. code:: python
+
+  with booklet.open('test.blt') as db:
+    for key in db.keys():
+      value = db[key]
+
+Any mutation of the booklet while an iterator is open (set/update/del/set_metadata/prune/clear) makes the iterator raise RuntimeError at its next step — including overwriting an *existing* key, which a plain dict would allow (an overwrite appends a new data block that the scan walks). Collect the keys into a list first if you need to write while walking. The one exception is set_timestamp, which writes in place and is allowed during iteration. The map method has its own semantics: plain writes are allowed while a map runs; only prune/clear invalidate it.
 
 Prune deleted items
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
