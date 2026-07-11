@@ -4,7 +4,7 @@ Notable changes to booklet. The format loosely follows [Keep a Changelog](https:
 booklet does not promise SemVer — minor versions may change behavior.
 Entries for 0.12.2 and earlier were reconstructed from commit history after the fact.
 
-## 0.12.6
+## 0.12.6 (2026-07-09)
 
 The iteration-contract release: iteration now follows python dict semantics.
 
