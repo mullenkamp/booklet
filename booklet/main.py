@@ -132,6 +132,78 @@ class Booklet(MutableMapping):
         else:
             return None
 
+    def set_reserved(self, slot: int, data: bytes, timestamp: Optional[Union[int, str, datetime]] = None):
+        """
+        Write an application-reserved internal slot.
+
+        Reserved slots are hidden bookkeeping entries for libraries built on
+        booklet. Like the metadata key they are invisible to iteration and
+        len(), survive prune(), and are destroyed by clear(). The value is
+        raw bytes - the caller owns serialization.
+
+        Parameters
+        ----------
+        slot : int
+            The reserved slot id (currently 1 or 2).
+        data : bytes
+            The raw bytes to store in the slot.
+        timestamp : int, str, datetime, or None, optional
+            A specific timestamp to associate with the slot.
+            If None (default), the current time is used.
+        """
+        if slot not in utils.reserved_slot_key_bytes:
+            raise ValueError(f'slot must be one of {sorted(utils.reserved_slot_key_bytes)}, not {slot!r}.')
+        if not isinstance(data, bytes):
+            raise TypeError('data must be bytes - reserved slots are serialization-agnostic.')
+        if self.writable:
+            ## The pre-sync is mandatory: a reserved key must never sit in the
+            ## shared write buffer, or a later buffer flush would count it into
+            ## n_keys (same discipline as set_metadata).
+            self.sync()
+            with self._thread_lock:
+                self._mutation_count += 1
+                _ = utils.write_data_blocks(self._file, utils.reserved_slot_key_bytes[slot], data, self._n_buckets, self._buffer_data, self._buffer_index, self._buffer_index_set, self._write_buffer_size, timestamp, self._ts_bytes_len, self._index_offset)
+                if self._buffer_index:
+                    utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
+                _ = utils.update_index(self._file, self._buffer_index, self._buffer_index_set, self._n_buckets, self._index_offset)
+                self._file.flush()
+        else:
+            raise ValueError('File is open for read only.')
+
+    def get_reserved(self, slot: int, include_timestamp: bool = False) -> Optional[Union[bytes, Tuple[bytes, int]]]:
+        """
+        Read an application-reserved internal slot.
+
+        Parameters
+        ----------
+        slot : int
+            The reserved slot id (currently 1 or 2).
+        include_timestamp : bool, optional
+            Whether to include the timestamp in the returned output.
+
+        Returns
+        -------
+        bytes or (bytes, int) or None
+            The raw slot bytes (with the timestamp if requested), or None if
+            the slot has never been written.
+        """
+        if slot not in utils.reserved_slot_key_hashes:
+            raise ValueError(f'slot must be one of {sorted(utils.reserved_slot_key_hashes)}, not {slot!r}.')
+        key_hash = utils.reserved_slot_key_hashes[slot]
+        if self._mmap is not None:
+            output = utils.mmap_get_value_ts(self._mmap, key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len, self._index_offset)
+        else:
+            output = utils.get_value_ts(self._file, key_hash, self._n_buckets, True, include_timestamp, self._ts_bytes_len, self._index_offset)
+
+        if output:
+            value, ts_int = output
+            if ts_int is not None:
+                return value, ts_int
+            else:
+                return value
+        else:
+            return None
+
     def _pre_key(self, key: Any) -> bytes:
 
         ## Serialize to bytes
@@ -521,18 +593,22 @@ class Booklet(MutableMapping):
             raise ValueError('File is open for read only.')
 
 
-    def prune(self, timestamp: Optional[Union[int, str, datetime]] = None) -> int:
+    def prune(self, timestamp: Optional[Union[int, str, datetime]] = None, keep_keys: Iterable[Any] = ()) -> int:
         """
         Prune old keys and values from the booklet.
 
-        This method removes overwritten or deleted entries, potentially reclaiming 
-        disk space and improving performance. It can also remove entries older 
+        This method removes overwritten or deleted entries, potentially reclaiming
+        disk space and improving performance. It can also remove entries older
         than a specified timestamp.
 
         Parameters
         ----------
         timestamp : int, str, datetime, or None, optional
             If provided, entries older than this timestamp will be removed.
+        keep_keys : iterable of keys, optional
+            Keys exempt from the timestamp eviction (their live entries are
+            kept regardless of age). Overwritten/deleted blocks are still
+            compacted away. No effect when timestamp is None.
 
         Returns
         -------
@@ -550,10 +626,12 @@ class Booklet(MutableMapping):
             if timestamp is not None:
                 timestamp = utils.make_timestamp_int(timestamp)
 
+            keep_hashes = frozenset(utils.hash_key(self._pre_key(k)) for k in keep_keys)
+
             with self._thread_lock:
                 self._mutation_count += 1
                 self._compaction_count += 1
-                n_keys, removed_count, new_index_offset = utils.prune_file(self._file, timestamp, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos)
+                n_keys, removed_count, new_index_offset = utils.prune_file(self._file, timestamp, self._n_buckets, self._n_bytes_file, self._n_bytes_key, self._n_bytes_value, self._write_buffer_size, self._ts_bytes_len, self._buffer_data, self._buffer_index, self._buffer_index_set, self._index_offset, self._first_data_block_pos, keep_hashes)
                 self._n_keys = n_keys
                 self._file.seek(self._n_keys_pos)
                 self._file.write(utils.int_to_bytes(self._n_keys, 4))
@@ -610,9 +688,13 @@ class Booklet(MutableMapping):
                 del_bool = utils.assign_delete_flag(self._file, key_hash, self._n_buckets, self._index_offset)
                 if del_bool:
                     self._mutation_count += 1
-                    self._n_keys -= 1
-                    self._file.seek(self._n_keys_pos)
-                    self._file.write(utils.int_to_bytes(self._n_keys, 4))
+                    ## Reserved keys (metadata + app slots) never incremented
+                    ## n_keys at write time, so deleting one must not decrement
+                    ## it either (previously skewed the count down by one).
+                    if key_bytes not in utils.reserved_key_bytes:
+                        self._n_keys -= 1
+                        self._file.seek(self._n_keys_pos)
+                        self._file.write(utils.int_to_bytes(self._n_keys, 4))
                 else:
                     raise KeyError(key)
         else:
@@ -800,7 +882,7 @@ class Booklet(MutableMapping):
 
                 pos += init_data_block_len + ts_key_value_len
 
-                if key_bytes is not None and key_bytes != utils.metadata_key_bytes:
+                if key_bytes is not None and key_bytes not in utils.reserved_key_bytes:
                     yield self._post_key(key_bytes), self._post_value(value_bytes)
 
     def map(self, func, keys=None, n_workers=None):
@@ -1024,6 +1106,18 @@ class FixedLengthValue(Booklet):
             'Metadata is not supported on fixed-length booklets: the metadata write '
             'path would corrupt fixed-stride iteration. Use a variable-length booklet '
             'if you need metadata.'
+        )
+
+    def set_reserved(self, slot: int, data: bytes, timestamp: Optional[Union[int, str, datetime]] = None):
+        """
+        Not supported on fixed-length booklets.
+        """
+        # Same reason as set_metadata: the variable-length block framing would
+        # corrupt fixed-stride iteration. (get_reserved stays inherited - it
+        # harmlessly returns None on a file that can never hold a slot.)
+        raise NotImplementedError(
+            'Reserved slots are not supported on fixed-length booklets: the write '
+            'path would corrupt fixed-stride iteration. Use a variable-length booklet.'
         )
 
 

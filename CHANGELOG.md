@@ -4,7 +4,29 @@ Notable changes to booklet. The format loosely follows [Keep a Changelog](https:
 booklet does not promise SemVer — minor versions may change behavior.
 Entries for 0.12.2 and earlier were reconstructed from commit history after the fact.
 
-## 0.12.6
+## 0.12.7 (2026-07-12)
+
+### Added
+- **Application-reserved internal slots**: `set_reserved(slot, data: bytes, timestamp=None)` /
+  `get_reserved(slot, include_timestamp=False)` on variable-length booklets — hidden
+  bookkeeping entries for libraries built on booklet (ebooklet's pending-change journal
+  is the first consumer). Like the metadata key they are invisible to
+  `keys()`/`items()`/`values()`/`timestamps()`/`map()` and `len()`, survive `prune()`,
+  and are destroyed by `clear()`. Values are raw bytes — the caller owns serialization.
+  Not supported on fixed-length booklets (`set_reserved` raises NotImplementedError,
+  same reason as `set_metadata` since 0.12.5). Note: like metadata, slots are hidden
+  from iteration but remain reachable via `get`/`in` with the raw internal key.
+  Files containing reserved slots read by booklet < 0.12.7 leak them into iteration —
+  upgrade readers first.
+- **`prune(timestamp=..., keep_keys=[...])`**: keys exempt from the timestamp eviction
+  (their live entries are kept regardless of age); overwritten/deleted blocks are still
+  compacted. Lets a caller protect unpushed/pending entries while evicting old cache.
+
+### Fixed
+- Deleting the metadata key (or a reserved slot) via `del` decremented the key count
+  that was never incremented for it, silently skewing `len()` down by one.
+
+## 0.12.6 (2026-07-09)
 
 The iteration-contract release: iteration now follows python dict semantics.
 
