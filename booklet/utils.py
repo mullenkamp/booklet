@@ -57,6 +57,15 @@ uuid_fixed_blt = b'\x04\xd3\xb2\x94\xf2\x10Ab\x95\x8d\x04\x00s\x8c\x9e\n'
 metadata_key_bytes = b'adb01ebc1ba3433eb043527'
 metadata_key_hash = b'B~\xf5\t\xe6\xef,\xbf\x16nn\x82\x01'
 
+## Application-reserved internal slots (0.12.7): hidden bookkeeping keys for
+## libraries built on booklet, invisible to iteration/len() like the metadata
+## key. The key bytes are permanent on-disk format constants - never change
+## them. The hash/frozenset companions are built after hash_key is defined.
+reserved_slot_key_bytes = {
+    1: b'7c40d2ea915b4f3a8e6d201',
+    2: b'f19a5c3d7e2b48069ab34c5',
+    }
+
 current_version = 5
 current_version_bytes = current_version.to_bytes(2, 'little', signed=False)
 
@@ -347,6 +356,14 @@ def hash_key(key):
     return blake2s(key, digest_size=key_hash_len).digest()
 
 
+## The full reserved-key sets (metadata + app slots): every key-enumeration
+## path skips members of reserved_key_bytes, and prune's key counting
+## compensates by reserved_key_hashes membership.
+reserved_slot_key_hashes = {slot: hash_key(k) for slot, k in reserved_slot_key_bytes.items()}
+reserved_key_bytes = frozenset(reserved_slot_key_bytes.values()) | {metadata_key_bytes}
+reserved_key_hashes = frozenset(reserved_slot_key_hashes.values()) | {metadata_key_hash}
+
+
 def write_init_bucket_indexes(file, n_buckets, index_pos, write_buffer_size):
     """
 
@@ -551,7 +568,7 @@ def iter_keys_value_from_start_end_pos(file, start, end, include_key, include_va
             next_block_pos += init_data_block_len + ts_key_value_len
 
             key = ts_key_value[ts_bytes_len:ts_bytes_len + key_len]
-            if key != metadata_key_bytes:
+            if key not in reserved_key_bytes:
                 if include_ts:
                     ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
                     if include_value:
@@ -727,7 +744,7 @@ def _mmap_iter_keys_values_region(mm, start, end, include_key, include_value, in
             next_block_pos += init_data_block_len + ts_key_value_len
 
             key = bytes(ts_key_value[ts_bytes_len:ts_bytes_len + key_len])
-            if key != metadata_key_bytes:
+            if key not in reserved_key_bytes:
                 if include_ts:
                     ts_int = bytes_to_int(ts_key_value[:ts_bytes_len])
                     if include_value:
@@ -1032,11 +1049,11 @@ def clear(file, n_buckets, n_keys_pos, write_buffer_size):
     file.flush()
 
 
-def prune_file(file, timestamp, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, write_buffer_size, ts_bytes_len, buffer_data, buffer_index, buffer_index_set, index_offset=sub_index_init_pos, first_data_block_pos=0):
+def prune_file(file, timestamp, n_buckets, n_bytes_file, n_bytes_key, n_bytes_value, write_buffer_size, ts_bytes_len, buffer_data, buffer_index, buffer_index_set, index_offset=sub_index_init_pos, first_data_block_pos=0, keep_hashes=frozenset()):
     """
 
     """
-    metadata_key_added = False
+    reserved_keys_added = 0
 
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
     init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
@@ -1085,10 +1102,11 @@ def prune_file(file, timestamp, n_buckets, n_bytes_file, n_bytes_key, n_bytes_va
                 key_hash = init_data_block[:key_hash_len]
 
                 keep = True
-                if key_hash == metadata_key_hash:
-                    # Keep the metadata key regardless of the timestamp filter; subtract it from n_keys later.
-                    metadata_key_added = True
-                elif timestamp and ts_bytes_len:
+                if key_hash in reserved_key_hashes:
+                    # Keep reserved keys (metadata + app slots) regardless of the
+                    # timestamp filter; subtract them from n_keys later.
+                    reserved_keys_added += 1
+                elif timestamp and ts_bytes_len and key_hash not in keep_hashes:
                     ts_int = bytes_to_int(ts_key_value_bytes[:ts_bytes_len])
                     if ts_int < timestamp:
                         keep = False
@@ -1171,8 +1189,7 @@ def prune_file(file, timestamp, n_buckets, n_bytes_file, n_bytes_key, n_bytes_va
     ## right after prune() can't leave a stale header pointing past the truncated EOF.
     os.fsync(file.fileno())
 
-    if metadata_key_added:
-        n_keys -= 1
+    n_keys -= reserved_keys_added
 
     return n_keys, removed_count, new_index_offset
 
@@ -1985,7 +2002,9 @@ def prune_file_fixed(file, n_buckets, n_bytes_file, n_bytes_key, value_len, writ
     """
 
     """
-    metadata_key_added = False
+    ## Vestigial on fixed files (they cannot hold metadata/reserved keys), kept
+    ## for structural parity with prune_file.
+    reserved_keys_added = 0
 
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
     init_data_block_len = one_extra_index_bytes_len + n_bytes_key
@@ -2025,8 +2044,8 @@ def prune_file_fixed(file, n_buckets, n_bytes_file, n_bytes_key, value_len, writ
 
                 key_hash = init_data_block[:key_hash_len]
 
-                if key_hash == metadata_key_hash:
-                    metadata_key_added = True
+                if key_hash in reserved_key_hashes:
+                    reserved_keys_added += 1
 
                 # Reconstruct with a fresh end-of-chain next-pointer (1); Pass 2 relinks chains. Length is
                 # known without building the block; extend header then payload to avoid a second value copy.
@@ -2095,8 +2114,7 @@ def prune_file_fixed(file, n_buckets, n_bytes_file, n_bytes_key, value_len, writ
     ## right after prune() can't leave a stale header pointing past the truncated EOF.
     os.fsync(file.fileno())
 
-    if metadata_key_added:
-        n_keys -= 1
+    n_keys -= reserved_keys_added
 
     return n_keys, removed_count, new_index_offset
 
