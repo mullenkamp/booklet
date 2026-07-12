@@ -91,7 +91,7 @@ As of version 0.12.6, iteration follows python dict semantics. Reads are allowed
     for key in db.keys():
       value = db[key]
 
-Any mutation of the booklet while an iterator is open (set/update/del/set_metadata/prune/clear) makes the iterator raise RuntimeError at its next step — including overwriting an *existing* key, which a plain dict would allow (an overwrite appends a new data block that the scan walks). Collect the keys into a list first if you need to write while walking. The one exception is set_timestamp, which writes in place and is allowed during iteration. The map method has its own semantics: plain writes are allowed while a map runs; only prune/clear invalidate it.
+Any mutation of the booklet while an iterator is open (set/update/del/set_metadata/set_reserved/prune/clear) makes the iterator raise RuntimeError at its next step — including overwriting an *existing* key, which a plain dict would allow (an overwrite appends a new data block that the scan walks). Collect the keys into a list first if you need to write while walking. The one exception is set_timestamp, which writes in place and is allowed during iteration. The map method has its own semantics: plain writes are allowed while a map runs; only prune/clear invalidate it.
 
 Prune deleted items
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -269,7 +269,7 @@ When we find the identical key hash, Booklet reads 6 bytes (key len and value le
 Deletes assign ndbp to 0 and reassign the prior data block it's original ndbp. This essentially just removes this data block from the key hash data block chain.
 A delete also happens when a user "overwrites" the same key.
 
-A "prune" method has been created that allows the user to remove "deleted" items. It has one optional parameter. If timestamps have been initialized in booklet, then the user can pass a timestamp that will remove all items older than that timestamp. 
+A "prune" method has been created that allows the user to remove "deleted" items. It has two optional parameters. If timestamps have been initialized in booklet, then the user can pass a timestamp that will remove all items older than that timestamp; keys listed in keep_keys are exempt from that eviction (their live entries are kept regardless of age). 
 
 FixedValue
 ~~~~~~~~~~~
