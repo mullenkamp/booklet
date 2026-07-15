@@ -93,6 +93,10 @@ As of version 0.12.6, iteration follows python dict semantics. Reads are allowed
 
 Any mutation of the booklet while an iterator is open (set/update/del/set_metadata/set_reserved/prune/clear) makes the iterator raise RuntimeError at its next step — including overwriting an *existing* key, which a plain dict would allow (an overwrite appends a new data block that the scan walks). Collect the keys into a list first if you need to write while walking. The one exception is set_timestamp, which writes in place and is allowed during iteration. The map method has its own semantics: plain writes are allowed while a map runs; only prune/clear invalidate it.
 
+Physical value locations (0.12.8)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+For bulk consumers that want to read many values through their own file handle (outside booklet's locks), ``locations()`` iterates ``(key, timestamp, value_offset, value_len)`` for every live key without reading any value bytes. Captured offsets stay valid across set/update/delete/auto-reindex (value blocks are append-only) and are invalidated only by ``prune()``/``clear()`` — snapshot the ``compaction_count`` property before capturing and re-check it after reading. Same iteration semantics as ``keys()``. Not supported on fixed-length booklets.
+
 Prune deleted items
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 When a key/value is "deleted", it's actually just flagged internally as deleted and the item is ignored on the following requests. This is the same for keys that get reassigned. To remove these deleted items from the file completely, the user can run the "prune" method. This should only be performed when the user has done a ton of deletes/overwrites as prune can be computationally intensive. There is no performance improvement to removing these items from the file. It's purely to regain space.

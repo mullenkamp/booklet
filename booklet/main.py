@@ -377,6 +377,62 @@ class Booklet(MutableMapping):
         else:
             raise ValueError('timestamps were not initialized with this file.')
 
+    def locations(self) -> Iterator[Tuple[Any, Optional[int], int, int]]:
+        """
+        Return an iterator of (key, timestamp, value_offset, value_len) for
+        every live user key, resolved from the file layout WITHOUT reading
+        value bytes (header-only scan).
+
+        value_offset/value_len address the raw (already serialized) value
+        bytes inside the underlying file; callers may read them through their
+        OWN file handle, outside this booklet's locks. timestamp is int
+        microseconds since the Unix epoch, or None if the file was created
+        with init_timestamps=False (deliberate divergence from timestamps(),
+        which raises there - offset iteration is still meaningful without
+        timestamps).
+
+        Validity contract: value blocks are append-only, so a captured
+        (value_offset, value_len) stays valid across set/update/delete/
+        auto-reindex on this file, and is INVALIDATED by prune() and clear()
+        (compactions move or destroy value bytes). Snapshot `compaction_count`
+        before capturing and re-check it after reading: a change means every
+        captured offset is invalid. An overwrite does not invalidate the old
+        offset - it keeps addressing the OLD value bytes until the next
+        compaction.
+
+        Buffered writes are flushed first, so returned offsets are on-disk
+        positions immediately readable by other handles on the same machine
+        (no fsync needed - page-cache visibility). Portability caveat: on
+        Windows the OS-level exclusive lock held by a write-mode booklet is
+        mandatory over roughly the first 4.29 GB of the file - a read through
+        a second handle within that range may be denied (PermissionError);
+        fall back to get()/get_timestamp() there. Works on BytesIO-backed
+        booklets too (offsets address the buffer).
+
+        Same iteration semantics as keys(): interleaved reads are allowed,
+        any mutation raises RuntimeError at the next step (set_timestamp
+        excepted).
+        """
+        if self._mmap is not None:
+            def make_iter():
+                return utils.mmap_iter_locations(self._mmap, self._n_buckets, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+        else:
+            def make_iter():
+                return utils.iter_locations(self._file, self._n_buckets, self._ts_bytes_len, self._index_offset, self._first_data_block_pos)
+
+        for key, ts_int, value_offset, value_len in self._iter_locked(make_iter):
+            yield self._post_key(key), ts_int, value_offset, value_len
+
+    @property
+    def compaction_count(self) -> int:
+        """
+        Monotonic count of compactions (prune()/clear()) performed through
+        this handle since open. Handle-scoped, not persisted. External holders
+        of locations() offsets snapshot this before capturing and re-check it
+        after reading to detect that their offsets were invalidated.
+        """
+        return self._compaction_count
+
     def __iter__(self) -> Iterator[Any]:
         return self.keys()
 
@@ -1119,6 +1175,17 @@ class FixedLengthValue(Booklet):
             'Reserved slots are not supported on fixed-length booklets: the write '
             'path would corrupt fixed-stride iteration. Use a variable-length booklet.'
         )
+
+    def locations(self) -> Iterator[Tuple[Any, Optional[int], int, int]]:
+        """
+        Not implemented for fixed-length booklets.
+        """
+        # The fixed-length block framing has no per-item value_len or
+        # timestamp (block layout: key_hash | next_ptr | key_len | key |
+        # value), so the variable-length header scan does not apply. Nothing
+        # needs it yet - implement with fixed framing if that changes.
+        # (compaction_count stays inherited and is meaningful here.)
+        raise NotImplementedError('locations() is not implemented for fixed-length booklets.')
 
 
     def _pre_value(self, value: Any) -> bytes:

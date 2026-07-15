@@ -4,6 +4,28 @@ Notable changes to booklet. The format loosely follows [Keep a Changelog](https:
 booklet does not promise SemVer — minor versions may change behavior.
 Entries for 0.12.2 and earlier were reconstructed from commit history after the fact.
 
+## 0.12.8 (2026-07-15)
+
+### Added
+- **`locations()`**: a header-only iterator of `(key, timestamp, value_offset, value_len)`
+  for every live user key — the physical position of each value's raw (serialized) bytes
+  inside the file, resolved without reading them. Callers may then read the bytes through
+  their OWN file handle, outside booklet's locks (ebooklet's pipelined push is the first
+  consumer). Validity contract: value blocks are append-only, so captured offsets survive
+  `set`/overwrite/`del`/auto-reindex and are invalidated ONLY by `prune()`/`clear()`; an
+  overwrite leaves the old offset addressing the OLD bytes. Buffered writes are flushed
+  first, so offsets are on-disk positions. Yields `timestamp=None` on files created with
+  `init_timestamps=False` (deliberate divergence from `timestamps()`, which raises there).
+  Same iteration semantics as `keys()` (mutation during iteration raises; `set_timestamp`
+  allowed). Not implemented for fixed-length booklets (different framing; raises
+  NotImplementedError). Windows caveat: a write-mode booklet's OS lock is mandatory over
+  roughly the first 4.29 GB — reads through a second handle in that range may be denied
+  (PermissionError); fall back to `get()`/`get_timestamp()`.
+- **`compaction_count`** (read-only property): monotonic count of compactions
+  (`prune()`/`clear()`) performed through this handle since open. External holders of
+  `locations()` offsets snapshot it before capturing and re-check after reading to detect
+  invalidation.
+
 ## 0.12.7 (2026-07-12)
 
 ### Added
