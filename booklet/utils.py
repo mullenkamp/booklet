@@ -618,6 +618,60 @@ def iter_keys_values(file, n_buckets, include_key, include_value, include_ts, ts
         yield from iter_keys_value_from_start_end_pos(file, first_data_block_pos, file_end, include_key, include_value, include_ts, ts_bytes_len)
 
 
+def iter_locations_from_start_end_pos(file, start, end, ts_bytes_len):
+    """
+    Header-only region scan for locations(): yields
+    (key, ts_int_or_None, value_offset, value_len) for live, non-reserved
+    blocks WITHOUT reading value bytes. The loop re-seeks absolutely each
+    step, so skipping a value costs nothing - this is what keeps a scan of a
+    multi-GB file down to the block headers.
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
+
+    next_block_pos = start
+
+    while next_block_pos < end:
+        file.seek(next_block_pos)
+        init_data_block = file.read(init_data_block_len)
+
+        next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+        key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+        value_len = bytes_to_int(init_data_block[one_extra_index_bytes_len + n_bytes_key:])
+
+        if next_data_block_pos:  # A value of 0 means it was deleted
+            ts_key = file.read(ts_bytes_len + key_len)
+            key = ts_key[ts_bytes_len:]
+            if key not in reserved_key_bytes:
+                ts_int = bytes_to_int(ts_key[:ts_bytes_len]) if ts_bytes_len else None
+                value_offset = next_block_pos + init_data_block_len + ts_bytes_len + key_len
+                yield key, ts_int, value_offset, value_len
+
+        next_block_pos += init_data_block_len + ts_bytes_len + key_len + value_len
+
+
+def iter_locations(file, n_buckets, ts_bytes_len, index_offset=sub_index_init_pos, first_data_block_pos=0):
+    """
+    Iterate (key, ts_int_or_None, value_offset, value_len) over all live user
+    keys - header-only (never reads value bytes). Region handling mirrors
+    iter_keys_values.
+    """
+    file_end = file.seek(0, 2)
+
+    if first_data_block_pos == 0:
+        first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+
+    if index_offset != sub_index_init_pos:
+        # Relocated index: scan two regions
+        yield from iter_locations_from_start_end_pos(file, first_data_block_pos, index_offset, ts_bytes_len)
+        start2 = index_offset + (n_buckets * n_bytes_file)
+        if start2 < file_end:
+            yield from iter_locations_from_start_end_pos(file, start2, file_end, ts_bytes_len)
+    else:
+        # Standard layout: one region
+        yield from iter_locations_from_start_end_pos(file, first_data_block_pos, file_end, ts_bytes_len)
+
+
 ############################################
 ### mmap read functions
 
@@ -786,6 +840,55 @@ def mmap_iter_keys_values(mm, n_buckets, include_key, include_value, include_ts,
             yield from _mmap_iter_keys_values_region(mm, start2, mm_len, include_key, include_value, include_ts, ts_bytes_len)
     else:
         yield from _mmap_iter_keys_values_region(mm, first_data_block_pos, mm_len, include_key, include_value, include_ts, ts_bytes_len)
+
+
+def _mmap_iter_locations_region(mm, start, end, ts_bytes_len):
+    """
+    Header-only region scan for locations() using mmap - the mmap twin of
+    iter_locations_from_start_end_pos (never touches value bytes).
+    """
+    one_extra_index_bytes_len = key_hash_len + n_bytes_file
+    init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
+
+    next_block_pos = start
+
+    while next_block_pos < end:
+        init_data_block = mm[next_block_pos:next_block_pos + init_data_block_len]
+
+        next_data_block_pos = bytes_to_int(init_data_block[key_hash_len:one_extra_index_bytes_len])
+        key_len = bytes_to_int(init_data_block[one_extra_index_bytes_len:one_extra_index_bytes_len + n_bytes_key])
+        value_len = bytes_to_int(init_data_block[one_extra_index_bytes_len + n_bytes_key:])
+
+        if next_data_block_pos:  # A value of 0 means it was deleted
+            payload_start = next_block_pos + init_data_block_len
+            ts_key = mm[payload_start:payload_start + ts_bytes_len + key_len]
+            key = bytes(ts_key[ts_bytes_len:])
+            if key not in reserved_key_bytes:
+                ts_int = bytes_to_int(ts_key[:ts_bytes_len]) if ts_bytes_len else None
+                value_offset = payload_start + ts_bytes_len + key_len
+                yield key, ts_int, value_offset, value_len
+
+        next_block_pos += init_data_block_len + ts_bytes_len + key_len + value_len
+
+
+def mmap_iter_locations(mm, n_buckets, ts_bytes_len, index_offset=sub_index_init_pos, first_data_block_pos=0):
+    """
+    Iterate (key, ts_int_or_None, value_offset, value_len) over all live user
+    keys using mmap - header-only. Region handling mirrors mmap_iter_keys_values.
+    """
+    mm_len = len(mm)
+
+    if first_data_block_pos == 0:
+        first_data_block_pos = sub_index_init_pos + (n_buckets * n_bytes_file)
+
+    if index_offset != sub_index_init_pos:
+        # Relocated index: scan two regions
+        yield from _mmap_iter_locations_region(mm, first_data_block_pos, index_offset, ts_bytes_len)
+        start2 = index_offset + (n_buckets * n_bytes_file)
+        if start2 < mm_len:
+            yield from _mmap_iter_locations_region(mm, start2, mm_len, ts_bytes_len)
+    else:
+        yield from _mmap_iter_locations_region(mm, first_data_block_pos, mm_len, ts_bytes_len)
 
 
 def mmap_get_value_fixed(mm, key_hash, n_buckets, value_len, index_offset=sub_index_init_pos):
