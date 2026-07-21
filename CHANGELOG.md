@@ -4,6 +4,36 @@ Notable changes to booklet. The format loosely follows [Keep a Changelog](https:
 booklet does not promise SemVer — minor versions may change behavior.
 Entries for 0.12.2 and earlier were reconstructed from commit history after the fact.
 
+## 0.12.9 (2026-07-21)
+
+### Fixed
+- **Opening a locked file no longer hangs silently.** Every OS-lock acquire went
+  through a bare blocking `portalocker.lock(...)`, so opening a file whose flock
+  another handle held waited forever with no message — including a second open of
+  the *same* file in the *same* process (POSIX `flock` is per open-file-description).
+  Now: a non-blocking fast attempt first; on contention the default keeps the fair,
+  zero-CPU kernel wait but logs ONE warning naming the file if the wait exceeds a
+  grace window (via a background timer — never busy-polls, stays silent for brief
+  legitimate contention). Retries only on `AlreadyLocked`; any other `LockException`
+  propagates. See `open(..., timeout=...)` below to fail fast instead.
+- **Create-path data-loss race — lock BEFORE truncate.** A `flag='n'` (and
+  `flag='c'` create) open did `io.open(fp, 'w+b')`, which truncates the file to
+  zero *before* the lock is acquired — so creating over a file another writer holds
+  destroyed that writer's data without waiting for the lock. The create path now
+  opens without truncating (`os.open(O_CREAT|O_RDWR)`), acquires the lock, and only
+  then truncates (for `'n'`). *Known limitation:* the narrower `'c'` create-vs-open
+  branch-selection TOCTOU under a race is unchanged.
+- `close()`/`sync()` now tolerate an already-closed file, so a defunct object (after
+  a failed `reopen()`, or a double `close()`) is always safely closeable instead of
+  raising `ValueError: I/O operation on closed file`.
+
+### Added
+- **`timeout=` parameter** on `open()`, `VariableLengthValue`, and `FixedLengthValue`.
+  `None` (default) waits indefinitely (warning if the wait is long); a number raises
+  the new **`LockTimeoutError`** (subclass of `TimeoutError`, exported) if the lock
+  isn't acquired in time. `timeout=0` fails fast on any contention. A finite timeout
+  is reused by `reopen()`; a timed-out `reopen()` leaves the object safely closeable.
+
 ## 0.12.8 (2026-07-15)
 
 ### Added

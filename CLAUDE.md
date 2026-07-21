@@ -72,8 +72,9 @@ Serializers are classes with static `dumps(obj) -> bytes` and `loads(bytes) -> o
 
 - Thread safety: `threading.Lock` (`self._thread_lock`) guards all file reads/writes
 - Process safety: `portalocker` file locks — `LOCK_SH` for read, `LOCK_EX` for write
+- Lock acquisition (0.12.9+): all acquires go through `utils._acquire_lock(file, flags, timeout, path_repr)` — a non-blocking fast attempt, then on contention: `timeout=None` (default) keeps the fair, zero-CPU blocking `portalocker.lock` but logs ONE warning naming the file past `_LOCK_WARN_AFTER` via a background `threading.Timer` (do NOT reintroduce a poll loop here — userspace polling defeats the kernel's FIFO queue for concurrent ingestion writers); a finite `timeout` polls (retrying only on `AlreadyLocked`; other `LockException` propagates) and raises `LockTimeoutError`. The helper never closes `file` on a raise — the caller wraps each acquire and closes on any failure (`reopen()` also sets `writable=False`). Create paths open WITHOUT truncating (`os.open(O_CREAT|O_RDWR)`), lock, THEN truncate for `'n'` — never truncate before the lock is held. BytesIO inputs skip locking entirely (guarded by `is_file`).
 - Write buffering: writes accumulate in `_buffer_data`/`_buffer_index` bytearrays, flushed when buffer exceeds `write_buffer_size` or on `sync()`/`close()`
-- `weakref.finalize` ensures cleanup (unlock + close) even if user forgets to close
+- `weakref.finalize` ensures cleanup (unlock + close) even if user forgets to close; `close()`/`sync()` tolerate an already-closed file so a defunct object is always safely closeable
 
 ### Iteration Contract (0.12.6+)
 

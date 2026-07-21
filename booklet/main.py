@@ -788,13 +788,16 @@ class Booklet(MutableMapping):
             self._mmap.close()
             self._mmap = None
         # self._finalizer()
-        try:
-            portalocker.lock(self._file, portalocker.LOCK_UN)
-        except portalocker.exceptions.LockException:
-            pass
-        except io.UnsupportedOperation:
-            pass
-        self._file.close()
+        # Tolerate an already-closed/None file so a defunct object (e.g. after a
+        # failed reopen, or a double close()) is always safely closeable.
+        if self._file is not None and not self._file.closed:
+            try:
+                portalocker.lock(self._file, portalocker.LOCK_UN)
+            except portalocker.exceptions.LockException:
+                pass
+            except io.UnsupportedOperation:
+                pass
+            self._file.close()
         self._finalizer.detach()
 
     # def __del__(self):
@@ -813,14 +816,25 @@ class Booklet(MutableMapping):
             or 'w' (read-write).
         """
         self.close()
+        lock_timeout = getattr(self, '_lock_timeout', None)
         if flag == 'w':
             self._file = io.open(self._file_path, 'r+b', buffering=0)
-            portalocker.lock(self._file, portalocker.LOCK_EX)
+            try:
+                utils._acquire_lock(self._file, portalocker.LOCK_EX, lock_timeout, self._file_path)
+            except BaseException:
+                self._file.close()
+                self.writable = False
+                raise
             self.writable = True
             self._mmap = None
         elif flag == 'r':
             self._file = io.open(self._file_path, 'rb')
-            portalocker.lock(self._file, portalocker.LOCK_SH)
+            try:
+                utils._acquire_lock(self._file, portalocker.LOCK_SH, lock_timeout, self._file_path)
+            except BaseException:
+                self._file.close()
+                self.writable = False
+                raise
             self.writable = False
             self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
             if hasattr(self._mmap, 'madvise') and hasattr(mmap, 'MADV_RANDOM'):
@@ -839,7 +853,7 @@ class Booklet(MutableMapping):
         """
         Sync the data buffers to disk, ensuring all changes are persisted.
         """
-        if self.writable:
+        if self.writable and self._file is not None and not self._file.closed:
             with self._thread_lock:
                 if self._buffer_index:
                     utils.flush_data_buffer(self._file, self._buffer_data, self._file.seek(0, 2))
@@ -1044,7 +1058,7 @@ class VariableLengthValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_serializer: Optional[Union[str, Any]] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps: bool = True, init_bytes: Optional[bytes] = None):
+    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_serializer: Optional[Union[str, Any]] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps: bool = True, init_bytes: Optional[bytes] = None, timeout: Optional[float] = None):
         """
         Initialize a VariableLengthValue booklet.
 
@@ -1066,9 +1080,13 @@ class VariableLengthValue(Booklet):
             Whether to enable timestamp support. Defaults to True.
         init_bytes : bytes, optional
             Initial bytes to write to a new file. Defaults to None.
+        timeout : float, optional
+            Seconds to wait for the OS file lock. None (default) waits
+            indefinitely (warning if the wait is long); a number raises
+            LockTimeoutError if the lock isn't acquired in time.
         """
         self._defer_reindex = False
-        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)
+        utils.init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes, timeout)
 
 
 ### Alias
@@ -1125,7 +1143,7 @@ class FixedLengthValue(Booklet):
     +---------+-------------------------------------------+
 
     """
-    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_len: Optional[int] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_bytes: Optional[bytes] = None):
+    def __init__(self, file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_len: Optional[int] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_bytes: Optional[bytes] = None, timeout: Optional[float] = None):
         """
         Initialize a FixedLengthValue booklet.
 
@@ -1145,9 +1163,13 @@ class FixedLengthValue(Booklet):
             Write buffer size in bytes. Defaults to 4MB (2**22).
         init_bytes : bytes, optional
             Initial bytes to write to a new file. Defaults to None.
+        timeout : float, optional
+            Seconds to wait for the OS file lock. None (default) waits
+            indefinitely (warning if the wait is long); a number raises
+            LockTimeoutError if the lock isn't acquired in time.
         """
         self._defer_reindex = False
-        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, init_bytes)
+        utils.init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, buffer_size, init_bytes, timeout)
 
 
     def set_metadata(self, data: Any, timestamp: Optional[Union[int, str, datetime]] = None):
@@ -1461,7 +1483,7 @@ class FixedLengthValue(Booklet):
 
 
 def open(
-    file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_serializer: Optional[Union[str, Any]] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps: bool = True, init_bytes: Optional[bytes] = None) -> VariableLengthValue:
+    file_path: Union[str, pathlib.Path, io.BytesIO], flag: str = "r", key_serializer: Optional[Union[str, Any]] = None, value_serializer: Optional[Union[str, Any]] = None, n_buckets: int=12007, buffer_size: int = 2**22, init_timestamps: bool = True, init_bytes: Optional[bytes] = None, timeout: Optional[float] = None) -> VariableLengthValue:
     """
     Open a persistent dictionary for reading and writing.
 
@@ -1497,10 +1519,14 @@ def open(
         Whether to enable timestamp support for keys. Defaults to True.
     init_bytes : bytes, optional
         Initial bytes to write to a new file. Defaults to None.
+    timeout : float, optional
+        Seconds to wait for the OS file lock. None (default) waits
+        indefinitely (warning if the wait is long); a number raises
+        LockTimeoutError if the lock isn't acquired in time.
 
     Returns
     -------
     Booklet
         A Booklet object (specifically a VariableLengthValue instance).
     """
-    return VariableLengthValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes)
+    return VariableLengthValue(file_path, flag, key_serializer, value_serializer, n_buckets, buffer_size, init_timestamps, init_bytes, timeout)
