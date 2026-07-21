@@ -46,3 +46,8 @@ If you are porting Booklet logic to Rust or looking for a Rust alternative:
 
 *   **Use `redb`** for a robust, production-grade embedded database.
 *   **Use `pickledb`** if you just want a quick "save this HashMap to a file" for config/small data (similar to `json.dump`).
+
+## New findings
+
+Fjall also seems really good:
+https://github.com/fjall-rs/fjall
