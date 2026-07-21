@@ -11,7 +11,9 @@ import uuid6 as uuid
 import io
 from hashlib import blake2b, blake2s
 import inspect
-from threading import Lock
+import logging
+import random
+from threading import Lock, Timer
 import portalocker
 # from fcntl import flock, LOCK_EX, LOCK_SH, LOCK_UN
 import mmap
@@ -1320,7 +1322,83 @@ def prune_file(file, timestamp, n_buckets, n_bytes_file, n_bytes_key, n_bytes_va
 
 
 
-def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size, init_timestamps, init_bytes):
+logger = logging.getLogger('booklet')
+
+# File-lock acquisition tuning (module-level so tests can shrink them).
+_LOCK_POLL_INTERVAL = 0.05  # seconds between non-blocking retries (finite timeout only)
+_LOCK_WARN_AFTER = 5.0      # seconds of waiting before the one "still waiting" warning
+
+
+class LockTimeoutError(TimeoutError):
+    """Raised when an OS file lock could not be acquired within a finite timeout."""
+
+
+def _acquire_lock(file, flags, timeout, path_repr):
+    """
+    Acquire an OS file lock without hanging silently.
+
+    A fast non-blocking attempt is tried first (zero added latency when the file
+    is uncontended). On contention:
+
+    - ``timeout is None`` (default): keep the kernel's fair, zero-CPU blocking
+      wait, but log ONE warning naming the file if the wait exceeds
+      ``_LOCK_WARN_AFTER`` (via a background timer, so brief legitimate contention
+      stays silent and the warning never busy-polls). Never raises on contention.
+    - ``timeout`` is a number: poll (non-blocking) until the deadline, warning once
+      past ``min(_LOCK_WARN_AFTER, timeout)``, then raise ``LockTimeoutError``.
+      ``timeout <= 0`` raises immediately after the single fast attempt.
+
+    Retries only on ``AlreadyLocked`` (would-block); any other ``LockException``
+    (bad fd, NFS, ...) propagates immediately. The caller owns cleanup: this
+    function never closes ``file`` on a raise.
+    """
+    ## Fast path: one non-blocking attempt (the uncontended common case).
+    try:
+        portalocker.lock(file, flags | portalocker.LOCK_NB)
+        return
+    except portalocker.exceptions.AlreadyLocked:
+        pass
+
+    msg = (
+        'waiting on a file lock for %s - another handle (possibly in this '
+        'process) holds it open; close it first' % (path_repr,)
+    )
+
+    if timeout is None:
+        ## Preserve the kernel's fair, zero-CPU blocking wait; a background timer
+        ## fires the one warning only if we are still blocked past the grace window.
+        timer = Timer(_LOCK_WARN_AFTER, logger.warning, (msg,))
+        timer.daemon = True
+        timer.start()
+        try:
+            portalocker.lock(file, flags)
+        finally:
+            timer.cancel()
+        return
+
+    ## Finite timeout: poll until the deadline, then raise (caller closes the file).
+    deadline = time.monotonic() + timeout
+    warn_at = time.monotonic() + min(_LOCK_WARN_AFTER, timeout)
+    warned = False
+    while True:
+        if time.monotonic() >= deadline:
+            raise LockTimeoutError(
+                'could not acquire a file lock on %s within %ss; another '
+                'handle/process holds it open' % (path_repr, timeout)
+            )
+        if not warned and time.monotonic() >= warn_at:
+            logger.warning(msg)
+            warned = True
+        ## Small jitter blunts thundering-herd/starvation when many waiters poll.
+        time.sleep(_LOCK_POLL_INTERVAL * (1.0 + random.random()))
+        try:
+            portalocker.lock(file, flags | portalocker.LOCK_NB)
+            return
+        except portalocker.exceptions.AlreadyLocked:
+            continue
+
+
+def init_files_variable(self, file_path, flag, key_serializer, value_serializer, n_buckets, write_buffer_size, init_timestamps, init_bytes, timeout=None):
     """
 
     """
@@ -1359,6 +1437,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             raise ValueError("Invalid flag")
 
     self.writable = write
+    self._lock_timeout = timeout
     self._write_buffer_size = write_buffer_size
 
     # self._platform = sys.platform
@@ -1382,17 +1461,21 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
                 self._file = io.open(fp, 'r+b', buffering=0)
     
                 ## Locks
-                portalocker.lock(self._file, portalocker.LOCK_EX)
-                # if self._platform.startswith('linux'):
-                #     flock(self._fd, LOCK_EX)
+                try:
+                    _acquire_lock(self._file, portalocker.LOCK_EX, timeout, fp)
+                except BaseException:
+                    self._file.close()
+                    raise
         else:
             if is_file:
                 self._file = io.open(fp, 'rb')
     
                 ## Lock
-                portalocker.lock(self._file, portalocker.LOCK_SH)
-                # if self._platform.startswith('linux'):
-                #     flock(self._fd, LOCK_SH)
+                try:
+                    _acquire_lock(self._file, portalocker.LOCK_SH, timeout, fp)
+                except BaseException:
+                    self._file.close()
+                    raise
 
         ## Read in initial bytes
         base_param_bytes = self._file.read(sub_index_init_pos)
@@ -1476,13 +1559,19 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         self._n_keys = 0
         self._n_keys_pos = n_keys_pos
 
-        ## Locks
+        ## Locks - open WITHOUT truncating, lock, THEN truncate (for 'n'), so a
+        ## concurrent writer's data is never destroyed before the lock is held.
         if is_file:
-            self._file = io.open(fp, 'w+b', buffering=0)
-            portalocker.lock(self._file, portalocker.LOCK_EX)
-
-        # if self._platform.startswith('linux'):
-        #     flock(self._fd, LOCK_EX)
+            fd = os.open(fp, os.O_CREAT | os.O_RDWR, 0o666)
+            self._file = io.open(fd, 'r+b', buffering=0)
+            try:
+                _acquire_lock(self._file, portalocker.LOCK_EX, timeout, fp)
+            except BaseException:
+                self._file.close()
+                raise
+            if flag == 'n':
+                self._file.truncate(0)
+            self._file.seek(0)
 
         ## Write new file
         with self._thread_lock:
@@ -1667,7 +1756,7 @@ def init_base_params_variable(self, key_serializer, value_serializer, n_buckets,
 ### Fixed value alternative functions
 
 
-def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, write_buffer_size, init_bytes):
+def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets, write_buffer_size, init_bytes, timeout=None):
     """
 
     """
@@ -1706,6 +1795,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
             raise ValueError("Invalid flag")
 
     self.writable = write
+    self._lock_timeout = timeout
     self._write_buffer_size = write_buffer_size
     # self._platform = sys.platform
 
@@ -1728,14 +1818,22 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
                 self._file = io.open(fp, 'r+b', buffering=0)
 
                 ## Locks
-                portalocker.lock(self._file, portalocker.LOCK_EX)
+                try:
+                    _acquire_lock(self._file, portalocker.LOCK_EX, timeout, fp)
+                except BaseException:
+                    self._file.close()
+                    raise
 
         else:
             if is_file:
                 self._file = io.open(fp, 'rb')
 
                 ## Lock
-                portalocker.lock(self._file, portalocker.LOCK_SH)
+                try:
+                    _acquire_lock(self._file, portalocker.LOCK_SH, timeout, fp)
+                except BaseException:
+                    self._file.close()
+                    raise
 
         ## Read in initial bytes
         base_param_bytes = self._file.read(sub_index_init_pos)
@@ -1817,12 +1915,19 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         self._n_keys = 0
         self._n_keys_pos = n_keys_pos
 
-        ## Locks
-        if not isinstance(file_path, io.BytesIO):
-            self._file = io.open(fp, 'w+b', buffering=0)
-            portalocker.lock(self._file, portalocker.LOCK_EX)
-        # if self._platform.startswith('linux'):
-        #     flock(self._fd, LOCK_EX)
+        ## Locks - open WITHOUT truncating, lock, THEN truncate (for 'n'), so a
+        ## concurrent writer's data is never destroyed before the lock is held.
+        if is_file:
+            fd = os.open(fp, os.O_CREAT | os.O_RDWR, 0o666)
+            self._file = io.open(fd, 'r+b', buffering=0)
+            try:
+                _acquire_lock(self._file, portalocker.LOCK_EX, timeout, fp)
+            except BaseException:
+                self._file.close()
+                raise
+            if flag == 'n':
+                self._file.truncate(0)
+            self._file.seek(0)
 
         ## Write new file
         with self._thread_lock:

@@ -5,7 +5,7 @@
 **Booklet** is a pure Python key-value file database (utilizing `.blt` files) designed for performance and concurrency. It implements the `collections.abc.MutableMapping` API (dictionary-like) and serves as a faster, more robust alternative to standard Python libraries like `shelve`, `dbm`, or `sqlitedict`.
 
 ### Key Features
-*   **Thread & Process Safety:** Uses thread locks (`threading.Lock`) and file locks (`portalocker`) to ensure safe concurrent access.
+*   **Thread & Process Safety:** Uses thread locks (`threading.Lock`) and file locks (`portalocker`) to ensure safe concurrent access. Lock acquisition (0.12.9+) goes through `utils._acquire_lock`: a non-blocking fast attempt, then either a fair blocking wait that logs one warning naming the file if it's long (`timeout=None`, default) or a polling wait that raises `LockTimeoutError` (finite `timeout`). Create paths lock BEFORE truncating so a `flag='n'` open never destroys a file another writer holds.
 *   **Serialization:** Supports multiple built-in serializers (e.g., `orjson`, `msgpack`, `pickle`) and allows custom serializer implementations.
 *   **Storage Modes:**
     *   **VariableLengthValue:** (Default) Variable-length keys/values, append-only writes (overwrites append new data), supports timestamps.
