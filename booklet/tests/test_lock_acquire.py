@@ -278,7 +278,7 @@ def test_create_race_same_process_preserves_held_file(tmp_path):
             run_timed(lambda: booklet.open(p, 'n', key_serializer='str',
                                            value_serializer='orjson', timeout=0.3))
     finally:
-        portalocker.lock(raw, portalocker.LOCK_UN)
+        portalocker.unlock(raw)
         raw.close()
     # Data intact (0.12.8 truncates before the lock -> data destroyed).
     with booklet.open(p, 'r') as b:
