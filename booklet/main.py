@@ -792,10 +792,10 @@ class Booklet(MutableMapping):
         # failed reopen, or a double close()) is always safely closeable.
         if self._file is not None and not self._file.closed:
             try:
-                portalocker.lock(self._file, portalocker.LOCK_UN)
-            except portalocker.exceptions.LockException:
-                pass
-            except io.UnsupportedOperation:
+                portalocker.unlock(self._file)
+            # See the note in utils.py: <4.2 raises OSError from unlock(), 4.2.0 raises
+            # LockException, and LockException is not an OSError subclass.
+            except (portalocker.exceptions.LockException, OSError):
                 pass
             self._file.close()
         self._finalizer.detach()

@@ -76,7 +76,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "orjson" },
-    { name = "portalocker" },
+    { name = "portalocker", specifier = ">=3" },
     { name = "uuid6", specifier = ">=2024.7.10" },
 ]
 

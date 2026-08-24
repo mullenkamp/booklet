@@ -329,10 +329,12 @@ def close_files(file, n_keys, n_keys_pos, write, mm=None):
         # file.flush()
 
     try:
-        portalocker.lock(file, portalocker.LOCK_UN)
-    except portalocker.exceptions.LockException:
-        pass
-    except io.UnsupportedOperation:
+        portalocker.unlock(file)
+    # portalocker <4.2 raises a raw OSError from unlock(); 4.2.0 translates it to
+    # LockException (which is NOT an OSError subclass). Catch both so booklet behaves
+    # identically across the range. io.UnsupportedOperation subclasses OSError, so the
+    # unseekable/unsupported case that used to need its own clause is covered here.
+    except (portalocker.exceptions.LockException, OSError):
         pass
     file.close()
 
@@ -1484,7 +1486,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         sys_uuid = base_param_bytes[:16]
         if sys_uuid != uuid_variable_blt:
             if is_file:
-                portalocker.lock(self._file, portalocker.LOCK_UN)
+                portalocker.unlock(self._file)
             raise TypeError('This is not the correct file type.')
 
         ## Read the rest of the base parameters
@@ -1842,7 +1844,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         sys_uuid = base_param_bytes[:16]
         if sys_uuid != uuid_fixed_blt:
             if is_file:
-                portalocker.lock(self._file, portalocker.LOCK_UN)
+                portalocker.unlock(self._file)
             raise TypeError('This is not the correct file type.')
 
         version = bytes_to_int(base_param_bytes[16:18])

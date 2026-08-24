@@ -4,6 +4,43 @@ Notable changes to booklet. The format loosely follows [Keep a Changelog](https:
 booklet does not promise SemVer — minor versions may change behavior.
 Entries for 0.12.2 and earlier were reconstructed from commit history after the fact.
 
+## 0.12.10 (2026-08-25)
+
+### Fixed
+- **Release locks with `portalocker.unlock()` — booklet now works on portalocker 4.2.0.**
+  portalocker 4.2.0 (2026-08-22) made `lock()` reject `LockFlags.UNBLOCK`, raising
+  `RuntimeError: lock() cannot release locks: LockFlags.UNBLOCK is not a valid flag for
+  lock(). Call unlock() to release a lock.` booklet released its OS locks with
+  `portalocker.lock(file, portalocker.LOCK_UN)` in four places (`utils.py:332`,
+  `utils.py:1487`, `utils.py:1845`, `main.py:795`), so **every open/close broke on a fresh
+  install**. Those four now call `portalocker.unlock(file)`.
+
+  Upstream is right and booklet was wrong: passing `LOCK_UN` to `lock()` *silently released*
+  a held lock on POSIX, because the bit went straight through to `fcntl`. It worked by
+  accident of that passthrough, never by contract. (On Windows `LockFlags.UNBLOCK` is
+  `msvcrt.LK_UNLCK` = 0, so the same calls failed there for a different reason — the
+  no-lock-type check.) booklet's other lock calls always name `LOCK_EX` or `LOCK_SH`, so
+  4.2.0's two sibling rejections — `SHARED | EXCLUSIVE`, and a flag set naming no lock
+  type — could never fire here.
+
+- **Exception handling widened to match both portalocker eras.** 4.2.0 also changed a failing
+  `unlock()` to raise `LockException` where older versions raised a raw `OSError`, and
+  `LockException` is *not* an `OSError` subclass. The two guarded release sites now catch
+  `(portalocker.exceptions.LockException, OSError)`, so behaviour is identical across the
+  supported range. `io.UnsupportedOperation` subclasses `OSError`, so its former separate
+  clause is subsumed rather than dropped.
+
+### Changed
+- **`portalocker` requirement is now `>=3`, with no upper bound.** The dependency previously
+  had neither. The floor is empirical: 2.x fails 6 of booklet's own tests for reasons
+  unrelated to unlocking, so it was never actually supported — the metadata just did not say
+  so. Verified **165/165 on portalocker 3.0.0, 4.1.0 and 4.2.0**.
+
+  How this reached production: an ingest container image rebuilt for unrelated reasons
+  resolved portalocker 4.2.0 from PyPI three days after its release, and every dataset failed
+  at first open. No lockfile-pinned developer environment could reproduce it, because images
+  install from PyPI and never read the lock.
+
 ## 0.12.9 (2026-07-21)
 
 ### Fixed

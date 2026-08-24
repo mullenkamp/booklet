@@ -22,7 +22,13 @@ classifiers = [
 ]
 
 requires-python = ">=3.10"
-dependencies = ['portalocker', 'orjson', 'uuid6>=2024.07.10']
+# portalocker>=3: booklet releases OS locks with portalocker.unlock(). The floor is
+# empirical, not cautious — 2.x fails 6 of booklet's own tests for reasons unrelated to
+# unlocking (it was never supported; the dependency simply had no floor to say so).
+# There is deliberately NO upper cap: 4.2.0 made lock() reject LOCK_UN, which booklet
+# used to rely on, and the fix was to stop relying on it. Verified 165/165 on 3.0.0,
+# 4.1.0 and 4.2.0.
+dependencies = ['portalocker>=3', 'orjson', 'uuid6>=2024.07.10']
 
 [dependency-groups]
 dev = [
