@@ -4,7 +4,7 @@ Notable changes to booklet. The format loosely follows [Keep a Changelog](https:
 booklet does not promise SemVer — minor versions may change behavior.
 Entries for 0.12.2 and earlier were reconstructed from commit history after the fact.
 
-## 0.12.11 (unreleased)
+## 0.12.11 (2026-11-10)
 
 ### Fixed
 - **The second reindex of a `FixedLengthValue` overflowed, and the retry hung forever.** A reindex covers the old
