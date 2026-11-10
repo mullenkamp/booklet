@@ -6,6 +6,7 @@ Created on Thu Jan  5 11:04:13 2023
 @author: mike
 """
 import os
+import errno
 import uuid6 as uuid
 # import math
 import io
@@ -44,6 +45,59 @@ file_timestamp_pos = 42
 timestamp_bytes_len = 7
 
 n_keys_crash = 4294967295
+
+## Header byte 199 (header padding before 0.12.11: 0x00, or ASCII '0' = 0x30 in files written before 2026-02; never
+## read by older versions): set to 0x01 while a reindex rewires the
+## file in place. A file left with it set was interrupted mid-reindex: its chains are half-rewired, so BOTH open
+## modes refuse it (a write-mode open would otherwise recount over the damage and adopt it). Older versions see the
+## crash marker that is stamped with it (read-only refused; their write-mode recount cannot be prevented).
+reindex_flag_pos = 199
+reindex_in_progress_msg = (
+    'A reindex of this file was interrupted (booklet >= 0.12.11 marks it while it rewires the file in place). The '
+    'file is inconsistent and cannot be opened in either mode: recreate it from its source, or restore a copy. '
+    '(An ebooklet local file or index sidecar can be deleted and fetched again from its remote.)')
+
+
+def reindex_in_progress(file):
+    """Whether the header's reindex flag is set (see ``reindex_flag_pos``)."""
+    file.seek(reindex_flag_pos)
+    return file.read(1) == b'\x01'
+
+
+def read_reindex_flag_byte(file):
+    """The header byte that holds the reindex flag, as it is (0x00 or a legacy 0x30 when no reindex is running)."""
+    file.seek(reindex_flag_pos)
+    return file.read(1)
+
+
+def restore_reindex_flag_byte(file, byte):
+    """Put back the byte the reindex flag replaced; the reindex is then complete."""
+    file.seek(reindex_flag_pos)
+    file.write(byte)
+    file.flush()
+
+
+def _write_all(file, data):
+    """Write ``data`` completely, or raise: an unbuffered file can take a SHORT write without raising (a full disk,
+    a file-size limit), and the rest would be silently lost."""
+    with memoryview(data) as mv:
+        done = 0
+        while done < len(mv):
+            n = file.write(mv[done:])
+            if not n:
+                raise OSError(errno.ENOSPC, f'short write: {done} of {len(mv)} B written')
+            done += n
+
+
+def _refuse_open(self, is_file, message):
+    """Release the file before refusing to open it, so a refusal never leaves the file locked in this process."""
+    if is_file:
+        try:
+            portalocker.unlock(self._file)
+        except (portalocker.exceptions.LockException, OSError):
+            pass
+        self._file.close()
+    raise ValueError(message)
 
 # n_bytes_index = 4
 n_bytes_file = 6
@@ -130,22 +184,61 @@ def get_new_n_buckets(n_buckets):
     return None
 
 
+def skip_block_size_variable(dead_size, ts_bytes_len):
+    """
+    The block sizes that cover a dead region of ``dead_size`` bytes in a variable-length file exactly: one deleted
+    block (key_len 1) whose value length stores the rest. Returns ``[dead_size]``, or None when no deleted block
+    fits (the region is smaller than a minimum block) or the value length would overflow its field. A None means
+    the region cannot be covered, so a reindex that needs it must not run (see ``reindex``).
+    """
+    overhead = key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value + ts_bytes_len
+    value_len = dead_size - overhead - 1
+    if value_len < 0 or value_len >= 2 ** (8 * n_bytes_value):
+        return None
+    return [dead_size]
+
+
+def skip_block_sizes_fixed(dead_size, value_len):
+    """
+    The block sizes that tile a dead region of ``dead_size`` bytes in a fixed-length file exactly with deleted
+    blocks. A block is ``key_hash_len + n_bytes_file + n_bytes_key + key_len + value_len`` bytes with
+    ``1 <= key_len < 2**(8*n_bytes_key)``, so one block covers at most 65,575 B at value_len 19: a larger region
+    needs several (booklet <= 0.12.10 wrote ONE block and overflowed the key-length field, then hung retrying the
+    reindex). No remainder is left smaller than a minimum block. Returns the list of sizes (summing to
+    ``dead_size``), or None when the region cannot be tiled.
+    """
+    overhead = key_hash_len + n_bytes_file + n_bytes_key
+    min_block = overhead + 1 + value_len
+    max_block = overhead + (2 ** (8 * n_bytes_key) - 1) + value_len
+    if dead_size < min_block:
+        return None
+    sizes = []
+    rem = dead_size
+    while rem > max_block:
+        take = max_block
+        if rem - take < min_block:
+            take = rem - min_block  # leave exactly one minimum block for the end
+        if not min_block <= take <= max_block:
+            return None
+        sizes.append(take)
+        rem -= take
+    sizes.append(rem)  # min_block <= rem <= max_block here
+    if sum(sizes) != dead_size or any(not min_block <= b <= max_block for b in sizes):
+        return None
+    return sizes
+
+
 def write_skip_block_variable(file, offset, dead_size, ts_bytes_len):
     """
-    Write a single skip block over a dead region for variable-length files.
-    The block is a deleted data block (next_ptr=0) that spans the entire dead region.
+    Write a single skip block over a dead region for variable-length files: a deleted data block (next_ptr=0) that
+    spans the entire dead region. Raises ValueError when the region cannot be covered (``reindex`` checks this
+    before it changes anything, and skips instead).
     """
-    one_extra_index_bytes_len = key_hash_len + n_bytes_file
-    init_data_block_len = one_extra_index_bytes_len + n_bytes_key + n_bytes_value
-
-    overhead = init_data_block_len + ts_bytes_len
-    if dead_size < overhead + 1:
-        return
-
-    remaining = dead_size - overhead
-    # key_len = 1 (minimum), value_len = remaining - 1
+    if skip_block_size_variable(dead_size, ts_bytes_len) is None:
+        raise ValueError(f'cannot cover a dead region of {dead_size} B with a deleted variable-length block')
+    overhead = key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value + ts_bytes_len
     key_len = 1
-    value_len = remaining - key_len
+    value_len = dead_size - overhead - key_len
 
     file.seek(offset)
     block = b'\x00' * key_hash_len  # key_hash (doesn't matter)
@@ -158,51 +251,104 @@ def write_skip_block_variable(file, offset, dead_size, ts_bytes_len):
 
 def write_skip_block_fixed(file, offset, dead_size, value_len):
     """
-    Write skip block(s) over a dead region for fixed-length files.
-    Each block has size: key_hash_len + n_bytes_file + n_bytes_key + key_len + value_len.
-    We need to fill exactly dead_size bytes with deleted blocks.
+    Tile a dead region of a fixed-length file exactly with deleted blocks (sizes from ``skip_block_sizes_fixed``).
+    Raises ValueError when the region cannot be tiled (``reindex`` checks this before it changes anything, and
+    skips instead).
     """
-    one_extra_index_bytes_len = key_hash_len + n_bytes_file
-    overhead = one_extra_index_bytes_len + n_bytes_key
-
-    # Minimum block size: overhead + 1 (key_len=1) + value_len
-    min_block = overhead + 1 + value_len
-
+    sizes = skip_block_sizes_fixed(dead_size, value_len)
+    if sizes is None:
+        raise ValueError(f'cannot tile a dead region of {dead_size} B with deleted fixed-length blocks '
+                         f'(value_len {value_len})')
+    overhead = key_hash_len + n_bytes_file + n_bytes_key
     pos = offset
-    end = offset + dead_size
-    while pos < end:
-        remaining = end - pos
-        if remaining < min_block:
-            break
-
-        # Use key_len = remaining - overhead - value_len to consume as much space as possible
-        key_len = remaining - overhead - value_len
-        if key_len < 1:
-            key_len = 1
-
-        block_size = overhead + key_len + value_len
-        file.seek(pos)
+    for block_size in sizes:
+        key_len = block_size - overhead - value_len
         block = b'\x00' * key_hash_len
         block += b'\x00' * n_bytes_file  # next_ptr = 0 (deleted)
         block += int_to_bytes(key_len, n_bytes_key)
         block += b'\x00' * (key_len + value_len)
+        file.seek(pos)
         file.write(block)
         pos += block_size
 
 
-def reindex(file, n_buckets, new_n_buckets, index_offset, first_data_block_pos, write_buffer_size, ts_bytes_len, fixed_value_len=None):
+def reindex(file, n_buckets, new_n_buckets, index_offset, first_data_block_pos, write_buffer_size, ts_bytes_len, fixed_value_len=None, n_keys=None, clear_flag=True):
     """
     Reindex using chain-following algorithm.
     Appends new bucket index at EOF and rewires all chains.
-    Returns (new_index_offset, new_first_data_block_pos).
+    Returns (new_index_offset, new_first_data_block_pos), or None when the reindex was skipped.
+
+    Steps 2-4 rewire the file in place, so they are not atomic. Everything that can be checked is checked first
+    (step 0): if the old index's region cannot be covered with deleted blocks, the reindex is SKIPPED and nothing is
+    written. It is only an optimisation (a load factor above 1 costs longer chains, not correctness).
+
+    Before anything else is written, the header's reindex flag (``reindex_flag_pos``) and the "closed incorrectly"
+    marker (``n_keys_crash``) are set. A reindex interrupted from there on by an exception or a kill leaves a file
+    that refuses to open in either mode instead of one that opens and reads wrong. They are not fsynced: an fsync
+    flushes ALL of the file's dirty pages, which cost +11 % on a 50k-key write that crosses one reindex. The page
+    cache outlives the process, so a machine crash mid-reindex is not covered, as for any booklet write. Step 1 only
+    appends the new index: if it fails (a full disk, most likely) the file is truncated back and the flag and count
+    restored, so the file is as it was. Step 4 writes the live key count (``n_keys``). The flag is cleared last, by
+    this function or, with ``clear_flag=False``, by the caller once it has adopted the new layout (until then an
+    interruption must still find the file flagged). The chain walk is bounded by the most blocks the file can hold,
+    so a corrupt (cyclic) chain raises instead of looping forever inside the reindex.
     """
     one_extra_index_bytes_len = key_hash_len + n_bytes_file
 
-    # 1. Allocate new bucket index at EOF
+    # 0. Plan the skip block(s) over the old index BEFORE anything is written.
+    old_index_size = n_buckets * n_bytes_file
+    relocated = index_offset != sub_index_init_pos
+    if relocated:
+        if fixed_value_len is not None:
+            if skip_block_sizes_fixed(old_index_size, fixed_value_len) is None:
+                return None
+        elif skip_block_size_variable(old_index_size, ts_bytes_len) is None:
+            return None
+
+    if fixed_value_len is not None:
+        min_block_size = key_hash_len + n_bytes_file + n_bytes_key + fixed_value_len
+    else:
+        min_block_size = key_hash_len + n_bytes_file + n_bytes_key + n_bytes_value + ts_bytes_len
+    ## Every live block is on exactly one chain, so a healthy walk visits at most as many blocks as fit between the
+    ## header and EOF (an over-estimate: it also counts the index bytes). Derived from the file, not from n_keys,
+    ## which does not count metadata and reserved-slot blocks.
+    max_steps = max(file.seek(0, 2) - sub_index_init_pos, 0) // min_block_size + 1
+
+    file.seek(n_keys_pos)
+    header_n_keys = file.read(4)
+    flag_byte = read_reindex_flag_byte(file)
     new_index_offset = file.seek(0, 2)
-    write_init_bucket_indexes(file, new_n_buckets, new_index_offset, write_buffer_size)
+
+    # 1a. The flag and the marker, before anything else is written.
+    file.seek(reindex_flag_pos)
+    file.write(b'\x01')
+    file.seek(n_keys_pos)
+    file.write(int_to_bytes(n_keys_crash, 4))
+    file.flush()
+
+    # 1. Allocate new bucket index at EOF. Nothing old is touched yet, so a failure is undone by truncating and
+    #    restoring the header; if THAT fails, the flag stays up and the file refuses to open.
+    try:
+        write_init_bucket_indexes(file, new_n_buckets, new_index_offset, write_buffer_size)
+        file.flush()
+        ## An unbuffered file can take a SHORT write without raising (a full disk, a file-size limit): check that the
+        ## whole new index is there before anything points into it.
+        allocated = file.seek(0, 2) - new_index_offset
+        if allocated != new_n_buckets * n_bytes_file:
+            raise OSError(errno.ENOSPC, f'reindex: could not allocate the new bucket index ({allocated} of '
+                                        f'{new_n_buckets * n_bytes_file} B written)')
+    except BaseException:
+        try:
+            file.truncate(new_index_offset)
+            file.seek(n_keys_pos)
+            file.write(header_n_keys)
+            restore_reindex_flag_byte(file, flag_byte)  # last: the file is as it was
+        except BaseException:
+            pass  # the flag is still up: the file refuses to open rather than read wrong
+        raise
 
     # 2. For each bucket in old index, follow chains and rewire to new index
+    steps = 0
     for old_bucket in range(n_buckets):
         old_bucket_pos = index_offset + (old_bucket * n_bytes_file)
         file.seek(old_bucket_pos)
@@ -212,6 +358,11 @@ def reindex(file, n_buckets, new_n_buckets, index_offset, first_data_block_pos, 
             continue
 
         while True:
+            steps += 1
+            if steps > max_steps:
+                raise RuntimeError(f'reindex: the chain walk visited more blocks ({steps}) than the file can hold '
+                                   f'({max_steps}): its chains are corrupt (cyclic). The file is marked as closed '
+                                   f'incorrectly.')
             file.seek(data_block_pos)
             data_index = file.read(one_extra_index_bytes_len)
             block_key_hash = data_index[:key_hash_len]
@@ -246,8 +397,7 @@ def reindex(file, n_buckets, new_n_buckets, index_offset, first_data_block_pos, 
             data_block_pos = next_ptr
 
     # 3. Write skip block(s) over old index if it was relocated (not at byte 200)
-    if index_offset != sub_index_init_pos:
-        old_index_size = n_buckets * n_bytes_file
+    if relocated:
         if fixed_value_len is not None:
             write_skip_block_fixed(file, index_offset, old_index_size, fixed_value_len)
         else:
@@ -263,7 +413,14 @@ def reindex(file, n_buckets, new_n_buckets, index_offset, first_data_block_pos, 
     file.seek(first_data_block_pos_pos)
     file.write(int_to_bytes(first_data_block_pos, n_bytes_file))
 
+    # The live key count (the caller's), or the header's count as it was before the marker.
+    file.seek(n_keys_pos)
+    file.write(int_to_bytes(n_keys, 4) if n_keys is not None else header_n_keys)
     file.flush()
+
+    # The flag last (the byte as it was: 0x00, or a legacy 0x30).
+    if clear_flag:
+        restore_reindex_flag_byte(file, flag_byte)
 
     return new_index_offset, first_data_block_pos
 
@@ -322,21 +479,23 @@ def close_files(file, n_keys, n_keys_pos, write, mm=None):
         except Exception:
             pass
 
-    if write:
-        file.seek(n_keys_pos)
-        file.write(int_to_bytes(n_keys, 4))
-        # file_mmap.flush()
-        # file.flush()
-
     try:
-        portalocker.unlock(file)
-    # portalocker <4.2 raises a raw OSError from unlock(); 4.2.0 translates it to
-    # LockException (which is NOT an OSError subclass). Catch both so booklet behaves
-    # identically across the range. io.UnsupportedOperation subclasses OSError, so the
-    # unseekable/unsupported case that used to need its own clause is covered here.
-    except (portalocker.exceptions.LockException, OSError):
-        pass
-    file.close()
+        if write and not file.closed:
+            file.seek(n_keys_pos)
+            file.write(int_to_bytes(n_keys, 4))
+            # file_mmap.flush()
+            # file.flush()
+    finally:
+        ## The lock is released and the file closed even when the marker write raises.
+        try:
+            portalocker.unlock(file)
+        # portalocker <4.2 raises a raw OSError from unlock(); 4.2.0 translates it to
+        # LockException (which is NOT an OSError subclass). Catch both so booklet behaves
+        # identically across the range. io.UnsupportedOperation subclasses OSError, so the
+        # unseekable/unsupported case that used to need its own clause is covered here.
+        except (portalocker.exceptions.LockException, OSError, ValueError):
+            pass
+        file.close()
 
 
 def bytes_to_int(b, signed=False):
@@ -1052,10 +1211,25 @@ def flush_data_buffer(file, buffer_data, write_pos):
 
     """
     bd_pos = len(buffer_data)
-    file.seek(write_pos)
     if bd_pos > 0:
-        _ = file.write(buffer_data)
+        ## Write completely or raise, and on a failure truncate back to the end of file as it was (never below it:
+        ## prune calls this with a mid-file write_pos) and KEEP the buffer: buffered index entries hold offsets
+        ## predicted from that end of file, so a retry rewrites the same bytes at the same place. booklet <= 0.12.10
+        ## ignored a short write and cleared the buffer, so a retried close() lost the blocks.
+        eof0 = file.seek(0, 2)
+        file.seek(write_pos)
+        try:
+            _write_all(file, buffer_data)
+        except BaseException:
+            try:
+                file.truncate(max(eof0, write_pos))
+            except BaseException:
+                pass
+            raise
         buffer_data.clear()
+    else:
+        file.seek(write_pos)
+    if bd_pos > 0:
         # file.flush()
 
         new_file_pos = write_pos + bd_pos
@@ -1503,6 +1677,10 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
         # is still created further down and overrides this).
         self._mmap = None
 
+        ## An interrupted reindex (0.12.11+): refused in both modes, before the recount below could adopt it
+        if base_param_bytes[reindex_flag_pos] == 1:
+            _refuse_open(self, is_file, reindex_in_progress_msg)
+
         ## Check the n_keys
         if self._n_keys == n_keys_crash:
             if write:
@@ -1511,8 +1689,11 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
                 deque(zip(self.keys(), counter), maxlen=0)
 
                 self._n_keys = next(counter)
+                ## Persist the recount (it used to stay in memory, so a later close without writes left the marker)
+                self._file.seek(n_keys_pos)
+                self._file.write(int_to_bytes(self._n_keys, 4))
             else:
-                raise ValueError('File must have been closed incorrectly. Please open with write access to fix it.')
+                _refuse_open(self, is_file, 'File must have been closed incorrectly. Please open with write access to fix it.')
 
     else:
         if not write:
@@ -1529,6 +1710,7 @@ def init_files_variable(self, file_path, flag, key_serializer, value_serializer,
             read_base_params_variable(self, init_bytes, key_serializer, value_serializer)
             # 0 out the n_keys
             init_bytes[n_keys_pos:n_keys_pos+4] = int_to_bytes(0, 4)
+            init_bytes[reindex_flag_pos] = 0  # a new file never inherits an interrupted-reindex flag
 
             # Reset index position so the new file doesn't inherit a large offset
             # from a reindexed source file (which would create an oversized sparse file)
@@ -1859,6 +2041,10 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
         # is still created further down and overrides this).
         self._mmap = None
 
+        ## An interrupted reindex (0.12.11+): refused in both modes, before the recount below could adopt it
+        if base_param_bytes[reindex_flag_pos] == 1:
+            _refuse_open(self, is_file, reindex_in_progress_msg)
+
         ## Check the n_keys
         if self._n_keys == n_keys_crash:
             if write:
@@ -1867,8 +2053,11 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
                 deque(zip(self.keys(), counter), maxlen=0)
 
                 self._n_keys = next(counter)
+                ## Persist the recount (it used to stay in memory, so a later close without writes left the marker)
+                self._file.seek(n_keys_pos)
+                self._file.write(int_to_bytes(self._n_keys, 4))
             else:
-                raise ValueError('File must have been closed incorrectly. Please open with write access to fix it.')
+                _refuse_open(self, is_file, 'File must have been closed incorrectly. Please open with write access to fix it.')
 
 
     else:
@@ -1886,6 +2075,7 @@ def init_files_fixed(self, file_path, flag, key_serializer, value_len, n_buckets
             read_base_params_fixed(self, init_bytes, key_serializer)
             # 0 out the n_keys
             init_bytes[n_keys_pos:n_keys_pos+4] = int_to_bytes(0, 4)
+            init_bytes[reindex_flag_pos] = 0  # a new file never inherits an interrupted-reindex flag
 
             # Reset index position so the new file doesn't inherit a large offset
             # from a reindexed source file (which would create an oversized sparse file)

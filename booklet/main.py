@@ -49,10 +49,52 @@ from .parallel import _map_worker
 
 
 
+## After a failed auto-reindex the file is half-rewired: every public operation but close() refuses, so nothing
+## reads wrong answers from it or writes onto it (booklet-reindex-plan-1). The failed INSTANCE is switched to a
+## subclass whose public methods all raise (_failed_class), so healthy instances pay nothing: a wrapper on every
+## method cost 15-19 % on point reads (measured 2026-11-10). One list for all classes, so a subclass override
+## (FixedLengthValue redefines set, update, prune, keys, get, ...) is covered too.
+_GUARDED_METHODS = (
+    'set_metadata', 'get_metadata', 'set_reserved', 'get_reserved', 'keys', 'items', 'values', 'timestamps',
+    'locations', '__iter__', '__len__', '__contains__', 'get', 'get_items', 'get_timestamp', 'set_timestamp', 'set',
+    'update', 'prune', '__getitem__', '__setitem__', '__delitem__', 'clear', 'reopen', 'sync', 'map',
+)
+
+
+def _reindex_failed_error(exc):
+    return RuntimeError(
+        f'booklet: an auto-reindex failed part-way ({exc!r}). The file is inconsistent and marked as closed '
+        f'incorrectly; this instance only allows close(). Do not reuse the file without recovering it.')
+
+
+def _refusing(name):
+    def refuse(self, *args, **kwargs):
+        raise _reindex_failed_error(self._reindex_failed) from self._reindex_failed
+    refuse.__name__ = name
+    return refuse
+
+
+_failed_classes = {}
+
+
+def _failed_class(cls):
+    """A subclass of ``cls`` whose public methods (all but close) raise: what an instance becomes after a failed
+    auto-reindex."""
+    failed = _failed_classes.get(cls)
+    if failed is None:
+        failed = type(f'Failed{cls.__name__}', (cls,), {name: _refusing(name) for name in _GUARDED_METHODS})
+        _failed_classes[cls] = failed
+    return failed
+
+
 class Booklet(MutableMapping):
     """
     Base class
     """
+    ## Set to the exception when an auto-reindex failed part-way (see _check_auto_reindex). The file is then
+    ## inconsistent, marked "closed incorrectly", and this instance refuses every further operation but close().
+    _reindex_failed = None
+
     def _set_file_timestamp(self, timestamp: Optional[Union[int, str, datetime]] = None):
         """
         Set the timestamp on the file.
@@ -669,7 +711,9 @@ class Booklet(MutableMapping):
         Returns
         -------
         int
-            The number of removed items.
+            The number of removed blocks: overwritten and deleted entries, plus the deleted blocks that cover an old
+            bucket index after a reindex (one per region up to 0.12.10; a relocated fixed-length index can need
+            several since 0.12.11).
         """
         self.sync()
 
@@ -782,8 +826,20 @@ class Booklet(MutableMapping):
     def close(self):
         """
         Sync and close the booklet file.
+
+        If the sync raises (a full disk, say), the file stays open with its buffered writes, as before 0.12.11, so
+        the close can be retried without losing them; the lock is held until then (or until the instance is
+        garbage-collected). After a failed auto-reindex the instance was already finalized at the failure (the
+        file marked, unlocked and closed), so close() just returns.
         """
+        if self._reindex_failed is not None:
+            self._finalizer()  # already ran at the failure; a no-op
+            self._mmap = None
+            return
         self.sync()
+        self._close_cleanly()
+
+    def _close_cleanly(self):
         if self._mmap is not None:
             self._mmap.close()
             self._mmap = None
@@ -869,29 +925,75 @@ class Booklet(MutableMapping):
     def _sync_index(self):
         n_extra_keys = utils.update_index(self._file, self._buffer_index, self._buffer_index_set, self._n_buckets, self._index_offset)
         self._n_keys += n_extra_keys
+        ## The live count before a reindex can start: an interruption between here and the end of sync() then leaves
+        ## a correct count (sync() used to write it only after the reindex).
+        self._file.seek(self._n_keys_pos)
+        self._file.write(utils.int_to_bytes(self._n_keys, 4))
 
         self._check_auto_reindex()
 
     def _check_auto_reindex(self):
         if self._defer_reindex:
             return
+        if self._reindex_failed is not None:
+            raise _reindex_failed_error(self._reindex_failed)  # never retry on the half-rewired file
         # Auto-reindex when load factor > 1.0
         if self._n_keys > self._n_buckets:
             new_n_buckets = utils.get_new_n_buckets(self._n_buckets)
             if new_n_buckets is not None:
-                # Bare increment - the caller (sync/_sync_index) already holds
-                # the non-reentrant lock; taking it again would self-deadlock.
-                self._mutation_count += 1
                 fixed_value_len = getattr(self, '_value_len', None)
-                new_index_offset, new_first_data_block_pos = utils.reindex(
-                    self._file, self._n_buckets, new_n_buckets,
-                    self._index_offset, self._first_data_block_pos,
-                    self._write_buffer_size, self._ts_bytes_len,
-                    fixed_value_len
-                )
-                self._n_buckets = new_n_buckets
-                self._index_offset = new_index_offset
-                self._first_data_block_pos = new_first_data_block_pos
+                try:
+                    flag_byte = utils.read_reindex_flag_byte(self._file)
+                    result = utils.reindex(
+                        self._file, self._n_buckets, new_n_buckets,
+                        self._index_offset, self._first_data_block_pos,
+                        self._write_buffer_size, self._ts_bytes_len,
+                        fixed_value_len, n_keys=self._n_keys, clear_flag=False
+                    )
+                    if result is None:
+                        return  # skipped: the old index region cannot be covered; nothing was written
+                    # Bare increment - the caller (sync/_sync_index) already holds
+                    # the non-reentrant lock; taking it again would self-deadlock.
+                    # Only a reindex that ran moves blocks (a skipped one must not kill live iterators).
+                    self._mutation_count += 1
+                    new_index_offset, new_first_data_block_pos = result
+                    self._n_buckets = new_n_buckets
+                    self._index_offset = new_index_offset
+                    self._first_data_block_pos = new_first_data_block_pos
+                    ## Only now, with the instance on the new layout, does the reindex flag come down: an interruption
+                    ## at any earlier point finds the file flagged and the instance is finalized, never left running
+                    ## on a stale layout over a reindexed file.
+                    utils.restore_reindex_flag_byte(self._file, flag_byte)
+                except BaseException as exc:
+                    self._after_failed_reindex(exc)
+                    raise
+
+    def _after_failed_reindex(self, exc):
+        """
+        A reindex raised. If the header's reindex flag is still up (it is raised before anything else and lowered
+        only after this instance adopted the new layout; a failed allocation lowers it after rolling back), the file
+        may be half-rewired:
+        this instance is finalized at once (marker written, lock released, descriptor closed), so a thread already
+        waiting inside a method, or a bound method taken earlier, fails on the closed file instead of reading or
+        writing the damage; and its class becomes one whose public methods refuse. Retrying would walk the rewired
+        chains (booklet <= 0.12.10 looped there forever). A failed allocation that was rolled back leaves the flag
+        down and the instance usable.
+        """
+        try:
+            damaged = self._file.closed or utils.reindex_in_progress(self._file)
+        except BaseException:
+            damaged = True
+        if not damaged:
+            return
+        self._reindex_failed = exc
+        try:
+            self._finalizer()
+        finally:
+            self._mmap = None
+            try:
+                self.__class__ = _failed_class(type(self))
+            except Exception:
+                pass  # an exotic subclass that cannot be derived: _reindex_failed and the closed file still refuse
 
     def _iter_items_unlocked(self):
         """
@@ -1428,7 +1530,9 @@ class FixedLengthValue(Booklet):
         Returns
         -------
         int
-            The number of removed items.
+            The number of removed blocks: overwritten and deleted entries, plus the deleted blocks that cover an old
+            bucket index after a reindex (one per region up to 0.12.10; a relocated fixed-length index can need
+            several since 0.12.11).
         """
         self.sync()
 

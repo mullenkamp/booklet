@@ -4,6 +4,56 @@ Notable changes to booklet. The format loosely follows [Keep a Changelog](https:
 booklet does not promise SemVer — minor versions may change behavior.
 Entries for 0.12.2 and earlier were reconstructed from commit history after the fact.
 
+## 0.12.11 (unreleased)
+
+### Fixed
+- **The second reindex of a `FixedLengthValue` overflowed, and the retry hung forever.** A reindex covers the old
+  bucket index with deleted blocks. `write_skip_block_fixed` wrote ONE block, whose key length must fit 2 bytes
+  (`n_bytes_key`), so once the index had been relocated (by an earlier reindex or a `prune()`) and held 10,930 or
+  more buckets (65,575 B or more), the next reindex raised `OverflowError: int too big to convert`. The reindex had
+  already rewired the chains in place, and `close()` -> `sync()` retried it on the half-rewired file: that looped
+  forever, or, depending on the data, completed and wrote a clean header over damage (keys unreachable, `keys()`
+  raising, on a file that opened without error). Found when an ebooklet push hung at 100 % CPU for 1 h 50 min on a
+  remote-index sidecar crossing 144,013 keys. Now the old index is tiled with several deleted blocks
+  (`skip_block_sizes_fixed`); files written this way read correctly with 0.12.10 and earlier.
+- **A reindex that fails part-way leaves a file that opens correctly or refuses to open, in both modes; never one
+  that opens and reads wrong.** Everything checkable is checked before the first write. Then, before anything else
+  is written, a reindex-in-progress flag is set in the header (byte 199: header padding before 0.12.11, 0x00, or
+  ASCII '0' in files written before 2026-02; never read by older versions), together with the existing "closed
+  incorrectly" key-count marker. The new index is allocated and its size verified (an unbuffered file can take a
+  short write without raising). If that fails (a full disk, most likely), the file is truncated back and the header
+  restored, so the file is as it was and the instance stays usable: a retried `close()` completes the reindex. The
+  flag comes down only after the instance has adopted the new layout, so an exception, a `KeyboardInterrupt` or a
+  kill at any point before that leaves the flag up. A file with the flag up refuses to open in read-only AND write
+  mode, with an explicit message. Before, a write-mode open recounted over the damage and adopted it, losing keys
+  silently. The flag is not fsynced, because an fsync flushes the whole file and cost +11 % on a write that crosses
+  a reindex. So a machine crash mid-reindex is not covered, as for any booklet write. Older versions see the
+  marker: their read-only open refuses, and their write-mode recount cannot be prevented. The instance that saw the
+  failure is finalized at once (marker written, lock released, file closed), so a thread already waiting inside a
+  method, or a bound method taken earlier, fails on the closed file; every public method but `close()` raises
+  `RuntimeError`. A completed reindex writes the live key count, so a successful reindex also clears a marker left
+  by an earlier unclean exit, and the flag byte is put back as it was. The reindex's chain walk is bounded by the
+  most blocks the file can hold, so corrupt (cyclic) chains raise there instead of looping; lookups and iteration
+  over a file damaged by an older version are not bounded. A flagged file has no recovery path yet (recreate it, or
+  restore a copy; an ebooklet local file or sidecar can be fetched again).
+- **A short write while flushing buffered data lost the unwritten bytes.** `flush_data_buffer` ignored `write()`'s
+  return value on an unbuffered file and cleared the buffer, so on a disk filling up the blocks were silently
+  dropped, and a retried `close()` then read wrong or hung. It now writes completely or raises, truncates back to
+  the end of file as it was, and keeps the buffer, so the retry rewrites the same bytes at the same place.
+- **The live key count is written before a reindex can start.** `sync()` used to write it only after, so an
+  interruption in between left a stale `len()`.
+- **A relocated index too small to cover with a deleted block was left uncovered** (fixed-length files with
+  `n_buckets` <= 6 at value_len 19, variable-length files with <= 5): iteration misparsed those bytes. Such a
+  reindex is now skipped; it is only an optimisation, and a skipped one no longer counts as a mutation, so it does
+  not invalidate live iterators.
+- **A write-mode open's key recount is persisted** to the header at once. It used to stay in memory, so closing
+  without writing anything left the "closed incorrectly" marker in place.
+- **The finalizer releases the lock and closes the file even when its marker write raises.** A refused open
+  (wrong file type aside) also releases the file before raising.
+- `close()` keeps its 0.12.10 behaviour when its sync raises (a full disk, say): the instance stays open with its
+  buffered writes, so the close can be retried without losing them.
+- `prune()` now also counts the deleted blocks that tile an old index in its return value.
+
 ## 0.12.10 (2026-08-25)
 
 ### Fixed
